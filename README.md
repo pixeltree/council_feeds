@@ -8,6 +8,39 @@ Automatically monitors and records Calgary City Council webcasts when they go li
 
 ## Quick Start
 
+### Raspberry Pi (Recommended for 24/7 Recording) 🥧
+
+Perfect for low-power, always-on recording:
+
+```bash
+# One-line setup
+curl -fsSL https://raw.githubusercontent.com/pixeltree/council_feeds/main/setup-rpi.sh | bash
+
+# Or manually
+git clone https://github.com/pixeltree/council_feeds.git
+cd council_feeds
+./setup-rpi.sh
+```
+
+See **[docs/RASPBERRY_PI.md](docs/RASPBERRY_PI.md)** for complete guide.
+
+**Why RPi?**
+- ✅ Low power (~$5/year electricity)
+- ✅ Silent operation
+- ✅ Perfect performance for stream recording
+- ✅ Reliable 24/7 recording
+
+### Production with Docker
+
+```bash
+# Build and start
+docker-compose up --build -d
+
+# View dashboard at http://localhost:5000
+# View logs
+docker-compose logs -f
+```
+
 ### Development & Testing
 
 ```bash
@@ -23,17 +56,6 @@ python -m pytest tests/ -v
 python main.py
 
 # View web dashboard at http://localhost:5000
-```
-
-### Production with Docker
-
-```bash
-# Build and start
-docker-compose up --build -d
-
-# View dashboard at http://localhost:5000
-# View logs
-docker-compose logs -f
 ```
 
 ## Testing
