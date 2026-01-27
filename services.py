@@ -28,7 +28,11 @@ from config import (
     POST_PROCESS_MIN_SILENCE_DURATION,
     ENABLE_TRANSCRIPTION,
     WHISPER_MODEL,
-    HUGGINGFACE_TOKEN
+    HUGGINGFACE_TOKEN,
+    RECORDING_FORMAT,
+    ENABLE_SEGMENTED_RECORDING,
+    SEGMENT_DURATION,
+    RECORDING_RECONNECT
 )
 import os
 
@@ -270,11 +274,33 @@ class RecordingService:
         """Record the stream to a file using ffmpeg, tracking in database."""
         start_time = datetime.now(self.timezone)
         timestamp = start_time.strftime("%Y%m%d_%H%M%S")
-        output_file = os.path.join(self.output_dir, f"council_meeting_{timestamp}.mp4")
+
+        # Determine file extension and format
+        format_ext = RECORDING_FORMAT if RECORDING_FORMAT in ['mkv', 'mp4', 'ts'] else 'mkv'
+
+        # For segmented recording, use pattern
+        if ENABLE_SEGMENTED_RECORDING:
+            output_pattern = os.path.join(
+                self.output_dir,
+                f"council_meeting_{timestamp}_segment_%03d.{format_ext}"
+            )
+            output_file = os.path.join(
+                self.output_dir,
+                f"council_meeting_{timestamp}.{format_ext}"
+            )
+        else:
+            output_file = os.path.join(
+                self.output_dir,
+                f"council_meeting_{timestamp}.{format_ext}"
+            )
+            output_pattern = None
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-        print(f"Starting recording: {output_file}")
+        if output_pattern:
+            print(f"Starting segmented recording: {output_pattern}")
+        else:
+            print(f"Starting recording: {output_file}")
 
         # Find associated meeting in database
         meeting_id = None
@@ -290,15 +316,51 @@ class RecordingService:
         self.stop_requested = False
         db.log_stream_status(stream_url, 'live', meeting_id, 'Recording started')
 
-        # ffmpeg command to record HLS stream
-        cmd = [
-            self.ffmpeg_command,
-            '-i', stream_url,
-            '-c', 'copy',  # Copy codec (no re-encoding for efficiency)
-            '-bsf:a', 'aac_adtstoasc',  # Fix AAC stream
-            '-f', 'mp4',
-            output_file
-        ]
+        # Build ffmpeg command with resilient options
+        cmd = [self.ffmpeg_command]
+
+        # Add reconnect options if enabled
+        if RECORDING_RECONNECT:
+            cmd.extend([
+                '-reconnect', '1',
+                '-reconnect_streamed', '1',
+                '-reconnect_delay_max', '5'
+            ])
+
+        cmd.extend(['-i', stream_url])
+
+        # Copy streams without re-encoding
+        cmd.extend(['-c', 'copy'])
+
+        # Fix AAC stream
+        if format_ext != 'ts':  # TS doesn't need this
+            cmd.extend(['-bsf:a', 'aac_adtstoasc'])
+
+        # Add format-specific options
+        if ENABLE_SEGMENTED_RECORDING:
+            # Segmented recording for resilience
+            cmd.extend([
+                '-f', 'segment',
+                '-segment_time', str(SEGMENT_DURATION),
+                '-segment_format', format_ext if format_ext == 'mkv' else 'matroska',
+                '-reset_timestamps', '1',
+                '-strftime', '1',  # Allow time formatting in segment names
+                output_pattern
+            ])
+        else:
+            # Single file recording
+            if format_ext == 'mp4':
+                # Use fragmented MP4 for better resilience
+                cmd.extend([
+                    '-movflags', '+frag_keyframe+empty_moov+default_base_moof',
+                    '-f', 'mp4'
+                ])
+            elif format_ext == 'ts':
+                cmd.extend(['-f', 'mpegts'])
+            else:  # mkv
+                cmd.extend(['-f', 'matroska'])
+
+            cmd.append(output_file)
 
         try:
             process = subprocess.Popen(
@@ -377,11 +439,22 @@ class RecordingService:
                     break
 
             end_time = datetime.now(self.timezone)
-            print(f"Recording saved: {output_file}")
 
             # Clean up process tracking
             self.current_process = None
             self.current_recording_id = None
+
+            # If segmented, merge segments into single file
+            if ENABLE_SEGMENTED_RECORDING and output_pattern:
+                print("Merging recording segments...")
+                merged_file = self._merge_segments(output_pattern, output_file, timestamp, format_ext)
+                if merged_file:
+                    output_file = merged_file
+                    print(f"Recording saved: {output_file}")
+                else:
+                    print(f"Warning: Could not merge segments, keeping individual segments")
+            else:
+                print(f"Recording saved: {output_file}")
 
             # Update recording status in database
             status = 'completed' if not self.stop_requested else 'stopped'
@@ -457,6 +530,67 @@ class RecordingService:
             db.log_stream_status(stream_url, 'error', meeting_id, error_msg)
 
             return False
+
+    def _merge_segments(self, pattern: str, output_file: str, timestamp: str, format_ext: str) -> Optional[str]:
+        """Merge recording segments into a single file."""
+        import glob
+
+        # Find all segment files
+        segment_dir = os.path.dirname(pattern)
+        segment_pattern = os.path.basename(pattern).replace('%03d', '*')
+        segments = sorted(glob.glob(os.path.join(segment_dir, segment_pattern)))
+
+        if not segments:
+            print("Warning: No segments found to merge")
+            return None
+
+        if len(segments) == 1:
+            # Only one segment, just rename it
+            try:
+                os.rename(segments[0], output_file)
+                return output_file
+            except Exception as e:
+                print(f"Error renaming single segment: {e}")
+                return segments[0]
+
+        # Create concat file list for ffmpeg
+        concat_file = os.path.join(self.output_dir, f"concat_{timestamp}.txt")
+        try:
+            with open(concat_file, 'w') as f:
+                for segment in segments:
+                    f.write(f"file '{os.path.abspath(segment)}'\n")
+
+            # Merge using ffmpeg concat
+            merge_cmd = [
+                self.ffmpeg_command,
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_file,
+                '-c', 'copy',
+                output_file
+            ]
+
+            result = subprocess.run(merge_cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                # Successfully merged, delete segments and concat file
+                for segment in segments:
+                    try:
+                        os.remove(segment)
+                    except:
+                        pass
+                try:
+                    os.remove(concat_file)
+                except:
+                    pass
+                return output_file
+            else:
+                print(f"Warning: Merge failed: {result.stderr}")
+                return None
+
+        except Exception as e:
+            print(f"Error merging segments: {e}")
+            return None
 
     def stop_recording(self) -> bool:
         """Request the current recording to stop."""

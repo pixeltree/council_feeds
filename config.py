@@ -56,3 +56,9 @@ POST_PROCESS_MIN_SILENCE_DURATION = int(os.getenv("POST_PROCESS_MIN_SILENCE_DURA
 ENABLE_TRANSCRIPTION = os.getenv("ENABLE_TRANSCRIPTION", "false").lower() == "true"
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # tiny, base, small, medium, large
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", None)  # Required for speaker diarization
+
+# Recording resilience settings
+RECORDING_FORMAT = os.getenv("RECORDING_FORMAT", "mkv")  # mkv (safest), mp4, or ts
+ENABLE_SEGMENTED_RECORDING = os.getenv("ENABLE_SEGMENTED_RECORDING", "true").lower() == "true"
+SEGMENT_DURATION = int(os.getenv("SEGMENT_DURATION", "900"))  # 15 minutes in seconds
+RECORDING_RECONNECT = os.getenv("RECORDING_RECONNECT", "true").lower() == "true"  # Auto-reconnect on stream issues
