@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  council-recorder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: calgary-council-recorder
+    volumes:
+      # Store recordings in dedicated volume
+      - recordings:/app/recordings
+      - ./data:/app/data
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    environment:
+      - TZ=America/Edmonton
+      
+      # Recording settings optimized for VPS
+      - RECORDING_FORMAT=mkv
+      - ENABLE_SEGMENTED_RECORDING=true
+      - SEGMENT_DURATION=900              # 15 minutes
+      - RECORDING_RECONNECT=true
+      
+      # Disable CPU-intensive features on shared CPU
+      - ENABLE_TRANSCRIPTION=false        # Too slow on VPS
+      - ENABLE_POST_PROCESSING=false      # Can run manually if needed
+      
+      # Paths
+      - OUTPUT_DIR=/app/recordings
+      - DB_DIR=/app/data
+      
+    # Resource limits for VPS
+    mem_limit: 800m                       # Leave headroom for system
+    mem_reservation: 400m
+    
+    # Logging to prevent disk fill
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  recordings:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/council_recordings
+
+# For production, consider adding:
+# - Nginx reverse proxy with SSL
+# - Automatic backup to object storage
+# - Monitoring/alerting
