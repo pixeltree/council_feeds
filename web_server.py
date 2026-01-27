@@ -14,6 +14,14 @@ import threading
 
 app = Flask(__name__)
 
+# Global reference to recording service (set by main.py)
+recording_service = None
+
+def set_recording_service(service):
+    """Set the recording service instance for the web server to use."""
+    global recording_service
+    recording_service = service
+
 
 def get_current_recording():
     """Get currently active recording if any."""
@@ -142,6 +150,37 @@ def api_status():
             for m in meetings
         ]
     })
+
+
+@app.route('/api/stop-recording', methods=['POST'])
+def api_stop_recording():
+    """API endpoint to stop the current recording."""
+    global recording_service
+
+    if recording_service is None:
+        return jsonify({
+            'success': False,
+            'error': 'Recording service not available'
+        }), 500
+
+    if not recording_service.is_recording():
+        return jsonify({
+            'success': False,
+            'error': 'No recording in progress'
+        }), 400
+
+    success = recording_service.stop_recording()
+
+    if success:
+        return jsonify({
+            'success': True,
+            'message': 'Recording stop requested'
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': 'Failed to stop recording'
+        }), 500
 
 
 @app.route('/api/recordings/<int:recording_id>/segment', methods=['POST'])
