@@ -1,5 +1,7 @@
-# Recordings
+# Recordings and data
 recordings/
+data/
+meeting_schedule_cache.json
 
 # Python
 __pycache__/

@@ -1,15 +1,17 @@
 # Calgary Council Stream Recorder
 
-Automatically monitors and records Calgary City Council webcasts when they go live.
+Automatically monitors and records Calgary City Council webcasts when they go live, using smart scheduling based on the official meeting calendar.
 
 ## Features
 
-- Monitors the Calgary Council livestream every 10 seconds
-- Automatically starts recording when a stream is detected
-- Stops recording when the stream ends
-- Saves recordings with timestamps
-- Runs continuously to catch all future streams
-- Works in Docker container or natively
+- **Smart Scheduling**: Uses Calgary Open Data API to fetch official meeting schedules
+- **Dynamic Polling**: Active monitoring during meeting windows, idle polling otherwise
+- **SQLite Database**: Tracks meetings, recordings, and stream status history
+- **Automatic Recording**: Starts recording when stream goes live, stops when it ends
+- **Meeting Association**: Links recordings to specific council meetings
+- **Statistics**: Track recording history, duration, and file sizes
+- **Docker Ready**: Persistent storage for database and recordings
+- Runs continuously to catch all Council Chamber meetings
 
 ## Requirements
 
@@ -20,7 +22,7 @@ Automatically monitors and records Calgary City Council webcasts when they go li
 ### Native
 - Python 3.10+
 - ffmpeg
-- pip packages: requests, beautifulsoup4, yt-dlp
+- pip packages: requests, beautifulsoup4, python-dateutil, yt-dlp
 
 ## Installation & Usage
 
@@ -61,27 +63,30 @@ python3 main.py
 
 ## Configuration
 
-### Check Interval
-The app checks for live streams every 10 seconds by default. To change this, edit `main.py`:
+### Polling Intervals
+The app uses dynamic polling based on meeting schedules:
 
 ```python
-CHECK_INTERVAL = 10  # Check every 10 seconds
+ACTIVE_CHECK_INTERVAL = 30    # 30 seconds during meeting windows
+IDLE_CHECK_INTERVAL = 1800    # 30 minutes outside meeting windows
+CALENDAR_REFRESH_HOURS = 24   # Refresh meeting schedule daily
 ```
 
-- Lower values (e.g., 5) = faster detection but more server requests
-- Higher values (e.g., 60) = slower detection but fewer server requests
+Meeting windows are defined as 15 minutes before to 6 hours after scheduled meeting time.
 
-### Output Directory
-Recordings are saved to `./recordings/` by default. To change this, edit `main.py`:
+### Storage Locations
+Recordings and database are stored separately:
 
 ```python
-OUTPUT_DIR = "./recordings"
+OUTPUT_DIR = "./recordings"   # Video files
+DB_DIR = "./data"            # SQLite database and cache
 ```
 
-For Docker, the directory is mapped in `docker-compose.yml`:
+For Docker, both directories are mounted as volumes in `docker-compose.yml`:
 ```yaml
 volumes:
-  - ./recordings:/recordings
+  - ./recordings:/app/recordings
+  - ./data:/app/data
 ```
 
 ### Stream URLs
@@ -111,12 +116,32 @@ Example: `council_meeting_20260127_143022.mp4`
 
 ## How It Works
 
-1. **Monitoring**: Checks the stream URL every 10 seconds
-2. **Detection**: When a live stream is found, recording starts immediately
-3. **Recording**: Uses ffmpeg to capture the HLS stream with no re-encoding (codec copy)
-4. **Monitoring During Recording**: Checks every 30 seconds if stream is still live
-5. **Completion**: When stream ends, stops recording and saves the file
-6. **Resume**: Returns to monitoring mode for the next stream
+1. **Calendar Sync**: Fetches upcoming Council meetings from Calgary Open Data API
+2. **Database Storage**: Stores meeting schedule in SQLite database
+3. **Smart Scheduling**:
+   - **Active Mode**: During meeting windows (15 min before → 6 hours after)
+     - Polls every 30 seconds for stream availability
+   - **Idle Mode**: Outside meeting windows
+     - Polls every 30 minutes to catch any unscheduled streams
+4. **Stream Detection**: When a live stream is found, recording starts immediately
+5. **Recording**: Uses ffmpeg to capture the HLS stream with no re-encoding (codec copy)
+6. **Database Tracking**: Links recording to specific meeting, tracks duration and file size
+7. **Stream Monitoring**: Checks every 30 seconds if stream is still live during recording
+8. **Completion**: When stream ends, updates database and returns to monitoring mode
+
+## Database Schema
+
+The SQLite database (`./data/council_feeds.db`) contains:
+
+- **meetings**: All Council Chamber meetings from the API
+- **recordings**: Recording history with file paths, durations, and status
+- **stream_status_log**: Stream availability timeline
+- **metadata**: App state (last calendar refresh, etc.)
+
+Query the database directly:
+```bash
+sqlite3 ./data/council_feeds.db "SELECT * FROM recordings ORDER BY start_time DESC LIMIT 10"
+```
 
 ## Troubleshooting
 
@@ -136,11 +161,22 @@ Ensure the `./recordings` directory has proper permissions:
 chmod 755 ./recordings
 ```
 
-## Source Information
+## Data Sources
 
-- Council webcasts page: https://www.calgary.ca/council/council-and-committee-webcasts.html
-- Stream player: https://video.isilive.ca/play/calgarycc/live
-- Stream provider: ISILive
+- **Meeting Calendar**: [Calgary Open Data - Council Calendar](https://data.calgary.ca/Government/Council-Calendar/23m4-i42g)
+- **Council Webcasts**: https://www.calgary.ca/council/council-and-committee-webcasts.html
+- **Stream Player**: https://video.isilive.ca/play/calgarycc/live
+- **Stream Provider**: ISILive
+
+## Portability
+
+The SQLite database and recordings are stored in mounted volumes, making the data:
+
+- ✅ **Portable**: Copy `./data/` and `./recordings/` to migrate
+- ✅ **Backupable**: Standard file backup tools work perfectly
+- ✅ **Version controllable**: Can commit sample database for testing
+- ✅ **Docker-friendly**: Persists across container restarts/rebuilds
+- ✅ **Cross-platform**: Works identically on any Docker host
 
 ## License
 
