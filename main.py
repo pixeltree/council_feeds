@@ -3,6 +3,7 @@ import requests
 import subprocess
 import time
 import os
+import threading
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
 from bs4 import BeautifulSoup
@@ -11,6 +12,9 @@ import pytz
 
 # Import database functions
 import database as db
+
+# Import web server
+import web_server
 
 # Calgary timezone (Council meetings are in local Calgary time)
 CALGARY_TZ = pytz.timezone('America/Edmonton')
@@ -305,6 +309,13 @@ def main():
     print(f"Database: {db.DB_PATH}")
     print(f"Active polling: every {ACTIVE_CHECK_INTERVAL}s (during meeting windows)")
     print(f"Idle polling: every {IDLE_CHECK_INTERVAL}s (outside meeting windows)")
+    print(f"Web interface: http://0.0.0.0:5000")
+    print("-" * 70)
+
+    # Start web server in background thread
+    web_thread = threading.Thread(target=web_server.run_server, daemon=True)
+    web_thread.start()
+    print("Web server started on http://0.0.0.0:5000")
     print("-" * 70)
 
     # Initialize database
