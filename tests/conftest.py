@@ -3,8 +3,24 @@
 import pytest
 import tempfile
 import os
+import sys
 from datetime import datetime
+from unittest.mock import MagicMock
 from config import CALGARY_TZ
+
+# Mock heavy transcription dependencies before any module imports
+# This must happen at module level before test collection
+mock_whisper = MagicMock()
+mock_torch = MagicMock()
+mock_torch.cuda.is_available.return_value = False
+mock_torch.device = MagicMock()
+mock_pyannote = MagicMock()
+mock_pyannote_audio = MagicMock()
+
+sys.modules['whisper'] = mock_whisper
+sys.modules['torch'] = mock_torch
+sys.modules['pyannote'] = mock_pyannote
+sys.modules['pyannote.audio'] = mock_pyannote_audio
 
 
 @pytest.fixture

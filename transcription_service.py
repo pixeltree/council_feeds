@@ -192,7 +192,8 @@ class TranscriptionService:
     def transcribe_with_speakers(
         self,
         video_path: str,
-        output_path: Optional[str] = None
+        output_path: Optional[str] = None,
+        save_to_file: bool = True
     ) -> Dict:
         """
         Complete transcription pipeline with speaker diarization.
@@ -200,10 +201,17 @@ class TranscriptionService:
         Args:
             video_path: Path to video file
             output_path: Optional path to save transcript (defaults to video_path + .json)
+            save_to_file: Whether to save results to file (default: True)
 
         Returns:
             Dictionary with transcript segments and metadata
+
+        Raises:
+            FileNotFoundError: If video_path does not exist
         """
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+
         print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
         print(f"[TRANSCRIPTION] Input file: {video_path}")
 
@@ -228,16 +236,28 @@ class TranscriptionService:
         }
 
         # Save to file if requested
-        if output_path is None:
-            output_path = video_path + '.transcript.json'
+        if save_to_file:
+            if output_path is None:
+                output_path = video_path + '.transcript.json'
 
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(result, f, indent=2, ensure_ascii=False)
+            self.save_transcript(result, output_path)
 
-        print(f"[TRANSCRIPTION] Transcript saved to: {output_path}")
         print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
 
         return result
+
+    def save_transcript(self, transcript: Dict, output_path: str):
+        """
+        Save transcript to JSON file.
+
+        Args:
+            transcript: Transcript dictionary
+            output_path: Path to save file
+        """
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(transcript, f, indent=2, ensure_ascii=False)
+
+        print(f"[TRANSCRIPTION] Transcript saved to: {output_path}")
 
     def format_transcript_as_text(self, segments: List[Dict]) -> str:
         """

@@ -8,6 +8,85 @@ import database as db
 
 
 @pytest.mark.unit
+class TestTranscriptDatabase:
+    """Test database functions for transcripts."""
+
+    def test_update_recording_transcript(self, temp_db_path, temp_db_dir, sample_meeting, monkeypatch):
+        """Test updating recording with transcript path."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+        db.save_meetings([sample_meeting])
+
+        # Create a recording
+        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        recording_id = db.create_recording(
+            None,
+            '/recordings/test.mp4',
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Update with transcript path
+        transcript_path = '/recordings/test.mp4.transcript.json'
+        db.update_recording_transcript(recording_id, transcript_path)
+
+        # Verify it was updated
+        recordings = db.get_recent_recordings(limit=1)
+        assert len(recordings) == 1
+        assert recordings[0]['transcript_path'] == transcript_path
+
+    def test_get_recent_recordings_includes_transcript(self, temp_db_path, temp_db_dir, sample_meeting, monkeypatch):
+        """Test that get_recent_recordings returns transcript_path."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+        db.save_meetings([sample_meeting])
+
+        # Create recording with transcript
+        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        recording_id = db.create_recording(
+            None,
+            '/recordings/test.mp4',
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        transcript_path = '/recordings/test.mp4.transcript.json'
+        db.update_recording_transcript(recording_id, transcript_path)
+
+        # Retrieve recordings
+        recordings = db.get_recent_recordings()
+        assert len(recordings) == 1
+        assert 'transcript_path' in recordings[0]
+        assert recordings[0]['transcript_path'] == transcript_path
+
+    def test_recording_without_transcript(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test recording without transcript has None for transcript_path."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create recording without transcript
+        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        db.create_recording(
+            None,
+            '/recordings/test.mp4',
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Retrieve recordings
+        recordings = db.get_recent_recordings()
+        assert len(recordings) == 1
+        assert 'transcript_path' in recordings[0]
+        assert recordings[0]['transcript_path'] is None
+
+
+@pytest.mark.unit
 class TestDatabase:
     """Test Database class."""
 
