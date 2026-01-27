@@ -114,6 +114,7 @@ def init_database():
                 file_size_bytes INTEGER,
                 status TEXT NOT NULL,  -- 'recording', 'completed', 'failed'
                 error_message TEXT,
+                transcript_path TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (meeting_id) REFERENCES meetings(id)
             )
@@ -409,6 +410,18 @@ def get_recording_stats() -> Dict:
         }
 
 
+def update_recording_transcript(recording_id: int, transcript_path: str):
+    """Update recording with transcript file path."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE recordings
+            SET transcript_path = ?
+            WHERE id = ?
+        """, (transcript_path, recording_id))
+
+
 def get_recent_recordings(limit: int = 10) -> List[Dict]:
     """Get recent recordings with meeting details."""
     with get_db_connection() as conn:
@@ -423,6 +436,7 @@ def get_recent_recordings(limit: int = 10) -> List[Dict]:
                 r.duration_seconds,
                 r.file_size_bytes,
                 r.status,
+                r.transcript_path,
                 m.title as meeting_title,
                 m.meeting_datetime
             FROM recordings r
@@ -441,6 +455,7 @@ def get_recent_recordings(limit: int = 10) -> List[Dict]:
                 'duration_seconds': row['duration_seconds'],
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
+                'transcript_path': row['transcript_path'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']
             })

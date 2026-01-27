@@ -22,7 +22,8 @@ class PostProcessor:
         self,
         silence_threshold_db: int = -40,
         min_silence_duration: int = 120,  # 2 minutes
-        ffmpeg_command: str = "ffmpeg"
+        ffmpeg_command: str = "ffmpeg",
+        ffprobe_command: str = "ffprobe"
     ):
         """
         Initialize post-processor.
@@ -33,10 +34,12 @@ class PostProcessor:
             min_silence_duration: Minimum silence duration (seconds) to split on.
                                  Breaks are typically 10-30 minutes.
             ffmpeg_command: Path to ffmpeg binary
+            ffprobe_command: Path to ffprobe binary
         """
         self.silence_threshold_db = silence_threshold_db
         self.min_silence_duration = min_silence_duration
         self.ffmpeg_command = ffmpeg_command
+        self.ffprobe_command = ffprobe_command
 
     def detect_silent_periods(self, video_path: str) -> List[Tuple[float, float]]:
         """
@@ -99,7 +102,7 @@ class PostProcessor:
     def get_video_duration(self, video_path: str) -> float:
         """Get total duration of video in seconds."""
         cmd = [
-            'ffprobe',
+            self.ffprobe_command,
             '-v', 'error',
             '-show_entries', 'format=duration',
             '-of', 'json',

@@ -5,6 +5,12 @@ pytz==2024.1
 flask==3.0.0
 schedule==1.2.0
 
+# Transcription dependencies
+openai-whisper==20231117
+pyannote.audio==3.1.1
+torch==2.2.0
+torchaudio==2.2.0
+
 # Testing dependencies
 pytest==7.4.3
 pytest-cov==4.1.0

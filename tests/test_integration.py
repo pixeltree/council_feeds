@@ -3,10 +3,10 @@
 import pytest
 import responses
 from datetime import datetime, timedelta
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, MagicMock, mock_open
 from config import CALGARY_TZ
 import database as db
-from services import CalendarService, MeetingScheduler, StreamService
+from services import CalendarService, MeetingScheduler, StreamService, RecordingService
 
 
 @pytest.mark.integration
@@ -247,3 +247,178 @@ class TestDatabaseIntegration:
         recordings = db.get_recent_recordings()
         assert len(recordings) == 1
         assert recordings[0]['status'] == 'completed'
+
+
+@pytest.mark.integration
+class TestTranscriptionIntegration:
+    """Integration tests for transcription with recording service."""
+
+    @patch('services.ENABLE_TRANSCRIPTION', True)
+    @patch('services.db.update_recording_transcript')
+    @patch('transcription_service.TranscriptionService')
+    @patch('services.subprocess.Popen')
+    @patch('services.db.create_recording')
+    @patch('services.db.update_recording')
+    @patch('services.db.log_stream_status')
+    @patch('time.sleep')
+    @patch('os.path.getsize')
+    def test_recording_with_transcription(
+        self,
+        mock_getsize,
+        mock_sleep,
+        mock_log_status,
+        mock_update_recording,
+        mock_create_recording,
+        mock_popen,
+        mock_transcription_service_class,
+        mock_update_transcript,
+        temp_output_dir
+    ):
+        """Test complete recording flow with transcription enabled."""
+        # Setup recording mocks
+        mock_create_recording.return_value = 1
+        mock_getsize.return_value = 1024 * 1024
+
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.poll.side_effect = [None, 0]
+        mock_popen.return_value = mock_process
+
+        # Setup transcription mocks
+        mock_transcriber = Mock()
+        mock_transcriber.transcribe_with_speakers.return_value = {
+            'file': '/test/video.mp4',
+            'language': 'en',
+            'segments': [
+                {'start': 0.0, 'end': 5.0, 'text': 'Hello', 'speaker': 'SPEAKER_00'}
+            ],
+            'full_text': 'Hello',
+            'num_speakers': 1
+        }
+        mock_transcriber.format_transcript_as_text.return_value = "[SPEAKER_00] (0:00:00)\nHello"
+        mock_transcription_service_class.return_value = mock_transcriber
+
+        # Setup stream service
+        mock_stream_service = Mock()
+        mock_stream_service.is_stream_live.return_value = False
+
+        service = RecordingService(
+            output_dir=temp_output_dir,
+            stream_service=mock_stream_service
+        )
+
+        # Execute recording
+        with patch('builtins.open', mock_open()):
+            result = service.record_stream('https://example.com/stream.m3u8')
+
+        assert result is True
+
+        # Verify transcription was called
+        mock_transcriber.transcribe_with_speakers.assert_called_once()
+        mock_transcriber.format_transcript_as_text.assert_called_once()
+
+        # Verify database was updated with transcript
+        mock_update_transcript.assert_called_once()
+
+    @patch('services.ENABLE_TRANSCRIPTION', True)
+    @patch('services.HUGGINGFACE_TOKEN', None)
+    @patch('services.subprocess.Popen')
+    @patch('services.db.create_recording')
+    @patch('services.db.update_recording')
+    @patch('services.db.log_stream_status')
+    @patch('time.sleep')
+    @patch('os.path.getsize')
+    def test_recording_continues_if_transcription_fails(
+        self,
+        mock_getsize,
+        mock_sleep,
+        mock_log_status,
+        mock_update_recording,
+        mock_create_recording,
+        mock_popen,
+        temp_output_dir
+    ):
+        """Test that recording completes even if transcription fails."""
+        # Setup recording mocks
+        mock_create_recording.return_value = 1
+        mock_getsize.return_value = 1024 * 1024
+
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.poll.side_effect = [None, 0]
+        mock_popen.return_value = mock_process
+
+        # Setup stream service
+        mock_stream_service = Mock()
+        mock_stream_service.is_stream_live.return_value = False
+
+        service = RecordingService(
+            output_dir=temp_output_dir,
+            stream_service=mock_stream_service
+        )
+
+        # Execute recording (transcription will fail due to missing token)
+        result = service.record_stream('https://example.com/stream.m3u8')
+
+        # Recording should still succeed
+        assert result is True
+        mock_update_recording.assert_called_once()
+
+
+@pytest.mark.integration
+class TestPostProcessingIntegration:
+    """Integration tests for post-processing with recording service."""
+
+    @patch('services.ENABLE_POST_PROCESSING', True)
+    @patch('post_processor.PostProcessor')
+    @patch('services.subprocess.Popen')
+    @patch('services.db.create_recording')
+    @patch('services.db.update_recording')
+    @patch('services.db.log_stream_status')
+    @patch('time.sleep')
+    @patch('os.path.getsize')
+    def test_recording_with_post_processing(
+        self,
+        mock_getsize,
+        mock_sleep,
+        mock_log_status,
+        mock_update_recording,
+        mock_create_recording,
+        mock_popen,
+        mock_post_processor_class,
+        temp_output_dir
+    ):
+        """Test complete recording flow with post-processing enabled."""
+        # Setup recording mocks
+        mock_create_recording.return_value = 1
+        mock_getsize.return_value = 1024 * 1024
+
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.poll.side_effect = [None, 0]
+        mock_popen.return_value = mock_process
+
+        # Setup post-processor mocks
+        mock_processor = Mock()
+        mock_processor.process_recording.return_value = {
+            'success': True,
+            'segments_created': 2
+        }
+        mock_post_processor_class.return_value = mock_processor
+
+        # Setup stream service
+        mock_stream_service = Mock()
+        mock_stream_service.is_stream_live.return_value = False
+
+        service = RecordingService(
+            output_dir=temp_output_dir,
+            stream_service=mock_stream_service
+        )
+
+        # Execute recording
+        result = service.record_stream('https://example.com/stream.m3u8')
+
+        assert result is True
+
+        # Verify post-processing was called
+        mock_processor.process_recording.assert_called_once()
