@@ -86,10 +86,16 @@ The app uses dynamic polling based on meeting schedules:
 ```python
 ACTIVE_CHECK_INTERVAL = 30    # 30 seconds during meeting windows
 IDLE_CHECK_INTERVAL = 1800    # 30 minutes outside meeting windows
-CALENDAR_REFRESH_HOURS = 24   # Refresh meeting schedule daily
 ```
 
-Meeting windows are defined as 15 minutes before to 6 hours after scheduled meeting time.
+Meeting windows are defined as 5 minutes before to 6 hours after scheduled meeting time.
+
+### Scheduled Tasks
+The application includes a built-in scheduler that runs in a background thread:
+
+- **Midnight Calendar Refresh**: Automatically refreshes the meeting calendar at 00:00 (midnight) Calgary time every day
+- This ensures the database always has the latest meeting schedule
+- No cron daemon required - pure Python scheduling
 
 ### Storage Locations
 Recordings and database are stored separately:
@@ -133,18 +139,20 @@ Example: `council_meeting_20260127_143022.mp4`
 
 ## How It Works
 
-1. **Calendar Sync**: Fetches upcoming Council meetings from Calgary Open Data API
-2. **Database Storage**: Stores meeting schedule in SQLite database
-3. **Smart Scheduling**:
-   - **Active Mode**: During meeting windows (15 min before → 6 hours after)
+1. **Initialization**: Starts scheduler thread for automated tasks
+2. **Calendar Sync**: Fetches upcoming Council meetings from Calgary Open Data API
+3. **Database Storage**: Stores meeting schedule in SQLite database
+4. **Scheduled Refresh**: Automatically refreshes calendar at midnight (00:00) Calgary time
+5. **Smart Scheduling**:
+   - **Active Mode**: During meeting windows (5 min before → 6 hours after)
      - Polls every 30 seconds for stream availability
    - **Idle Mode**: Outside meeting windows
      - Polls every 30 minutes to catch any unscheduled streams
-4. **Stream Detection**: When a live stream is found, recording starts immediately
-5. **Recording**: Uses ffmpeg to capture the HLS stream with no re-encoding (codec copy)
-6. **Database Tracking**: Links recording to specific meeting, tracks duration and file size
-7. **Stream Monitoring**: Checks every 30 seconds if stream is still live during recording
-8. **Completion**: When stream ends, updates database and returns to monitoring mode
+6. **Stream Detection**: When a live stream is found, recording starts immediately
+7. **Recording**: Uses ffmpeg to capture the HLS stream with no re-encoding (codec copy)
+8. **Database Tracking**: Links recording to specific meeting, tracks duration and file size
+9. **Stream Monitoring**: Checks every 30 seconds if stream is still live during recording
+10. **Completion**: When stream ends, updates database and returns to monitoring mode
 
 ## Database Schema
 

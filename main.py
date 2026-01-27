@@ -9,6 +9,7 @@ from dateutil import parser as date_parser
 from bs4 import BeautifulSoup
 import re
 import pytz
+import schedule
 
 # Import database functions
 import database as db
@@ -25,14 +26,16 @@ COUNCIL_CALENDAR_API = "https://data.calgary.ca/resource/23m4-i42g.json"
 # Polling intervals
 ACTIVE_CHECK_INTERVAL = 30  # Check every 30 seconds during meeting windows
 IDLE_CHECK_INTERVAL = 1800  # Check every 30 minutes outside meeting windows
-CALENDAR_REFRESH_HOURS = 24  # Refresh calendar daily
 
 OUTPUT_DIR = "./recordings"
 MAX_RETRIES = 3
 
-# Meeting window: start checking 15 minutes before, continue up to 6 hours after scheduled time
-MEETING_BUFFER_BEFORE = timedelta(minutes=15)
+# Meeting window: start checking 5 minutes before, continue up to 6 hours after scheduled time
+MEETING_BUFFER_BEFORE = timedelta(minutes=5)
 MEETING_BUFFER_AFTER = timedelta(hours=6)
+
+# Global flag to trigger calendar refresh
+calendar_refresh_requested = False
 
 # Common ISILive stream URL patterns
 STREAM_URL_PATTERNS = [
@@ -87,24 +90,23 @@ def fetch_council_meetings():
 
 def get_upcoming_meetings(force_refresh=False):
     """Get upcoming meetings, using database cache if available and fresh."""
+    global calendar_refresh_requested
+
     # Check if we need to refresh from API
     last_refresh = db.get_metadata('last_calendar_refresh')
-    needs_refresh = force_refresh
+    needs_refresh = force_refresh or calendar_refresh_requested
 
     # Use timezone-aware current time
     now_calgary = datetime.now(CALGARY_TZ)
 
-    if last_refresh:
+    if last_refresh and not needs_refresh:
         try:
             last_refresh_dt = datetime.fromisoformat(last_refresh)
             # Make timezone-aware if it isn't already
             if last_refresh_dt.tzinfo is None:
                 last_refresh_dt = CALGARY_TZ.localize(last_refresh_dt)
 
-            if (now_calgary - last_refresh_dt) >= timedelta(hours=CALENDAR_REFRESH_HOURS):
-                needs_refresh = True
-            else:
-                print(f"Using cached meeting schedule (last updated: {last_refresh_dt.strftime('%Y-%m-%d %H:%M %Z')})")
+            print(f"Using cached meeting schedule (last updated: {last_refresh_dt.strftime('%Y-%m-%d %H:%M %Z')})")
         except (ValueError, TypeError):
             needs_refresh = True
     else:
@@ -120,6 +122,7 @@ def get_upcoming_meetings(force_refresh=False):
             saved_count = db.save_meetings(meetings)
             db.set_metadata('last_calendar_refresh', now_calgary.isoformat())
             print(f"Saved {saved_count} Council meetings to database")
+            calendar_refresh_requested = False  # Reset the flag
 
     # Always return from database to ensure consistency
     return db.get_upcoming_meetings()
@@ -299,6 +302,24 @@ def record_stream(stream_url, current_meeting=None):
 
         return False
 
+def daily_calendar_refresh():
+    """Scheduled task: Refresh calendar at midnight."""
+    global calendar_refresh_requested
+    now = datetime.now(CALGARY_TZ)
+    print(f"\n[{now.strftime('%H:%M:%S')}] 📅 SCHEDULED TASK: Daily calendar refresh at midnight")
+    calendar_refresh_requested = True
+
+def run_scheduler():
+    """Run the scheduler in a separate thread."""
+    # Schedule daily calendar refresh at midnight Calgary time
+    schedule.every().day.at("00:00").do(daily_calendar_refresh)
+
+    print(f"📅 Scheduler initialized: Calendar refresh at 00:00 (midnight) Calgary time")
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # Check every minute
+
 def main():
     """Main monitoring loop with smart scheduling."""
     print("=" * 70)
@@ -309,6 +330,7 @@ def main():
     print(f"Database: {db.DB_PATH}")
     print(f"Active polling: every {ACTIVE_CHECK_INTERVAL}s (during meeting windows)")
     print(f"Idle polling: every {IDLE_CHECK_INTERVAL}s (outside meeting windows)")
+    print(f"Meeting buffer: {MEETING_BUFFER_BEFORE.seconds//60} min before, {MEETING_BUFFER_AFTER.seconds//3600} hours after")
     print(f"Web interface: http://0.0.0.0:5000")
     print("-" * 70)
 
@@ -320,6 +342,10 @@ def main():
 
     # Initialize database
     db.init_database()
+
+    # Start scheduler thread for midnight calendar refresh
+    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+    scheduler_thread.start()
 
     # Show recording statistics
     stats = db.get_recording_stats()
@@ -346,17 +372,17 @@ def main():
 
     print("-" * 70)
 
-    last_calendar_refresh = datetime.now(CALGARY_TZ)
     active_mode = False
 
     while True:
         try:
+            global calendar_refresh_requested
             current_time = datetime.now(CALGARY_TZ)
 
-            # Refresh calendar if needed
-            if (current_time - last_calendar_refresh) > timedelta(hours=CALENDAR_REFRESH_HOURS):
+            # Refresh calendar if scheduled task requested it
+            if calendar_refresh_requested:
+                print(f"[{current_time.strftime('%H:%M:%S')}] Processing scheduled calendar refresh...")
                 meetings = get_upcoming_meetings(force_refresh=True)
-                last_calendar_refresh = current_time
 
             # Determine if we're in active monitoring mode
             in_window, current_meeting = is_within_meeting_window(current_time, meetings)
@@ -392,9 +418,6 @@ def main():
                     print(f"[{current_time.strftime('%H:%M:%S')}] [{mode_label}] Stream is LIVE! Starting recording...")
                     record_stream(stream_url, current_meeting)
                     print(f"[{current_time.strftime('%H:%M:%S')}] Recording completed. Resuming monitoring...")
-                    # Refresh meetings after recording in case schedule changed
-                    meetings = get_upcoming_meetings(force_refresh=True)
-                    last_calendar_refresh = current_time
                 else:
                     if active_mode:  # Only log during active mode to reduce noise
                         print(f"[{current_time.strftime('%H:%M:%S')}] [🔴 ACTIVE] Stream found but not live yet...")
