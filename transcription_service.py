@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""
+Transcription service for Calgary Council Stream Recorder.
+Uses Whisper for speech-to-text and pyannote.audio for speaker diarization.
+"""
+
+import os
+import whisper
+import torch
+from pyannote.audio import Pipeline
+from typing import Dict, List, Optional
+from datetime import timedelta
+import json
+
+
+class TranscriptionService:
+    """Service for transcribing recorded videos with speaker diarization."""
+
+    def __init__(
+        self,
+        whisper_model: str = "base",
+        hf_token: Optional[str] = None,
+        device: Optional[str] = None
+    ):
+        """
+        Initialize transcription service.
+
+        Args:
+            whisper_model: Whisper model size (tiny, base, small, medium, large)
+            hf_token: HuggingFace token for pyannote.audio (required for diarization)
+            device: Device to use ('cpu', 'cuda', or None for auto-detect)
+        """
+        self.whisper_model_name = whisper_model
+        self.hf_token = hf_token
+
+        # Determine device
+        if device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = device
+
+        print(f"[TRANSCRIPTION] Using device: {self.device}")
+
+        # Lazy load models (only when needed)
+        self._whisper_model = None
+        self._diarization_pipeline = None
+
+    def _load_whisper_model(self):
+        """Lazy load Whisper model."""
+        if self._whisper_model is None:
+            print(f"[TRANSCRIPTION] Loading Whisper model '{self.whisper_model_name}'...")
+            self._whisper_model = whisper.load_model(self.whisper_model_name, device=self.device)
+        return self._whisper_model
+
+    def _load_diarization_pipeline(self):
+        """Lazy load pyannote diarization pipeline."""
+        if self._diarization_pipeline is None:
+            if not self.hf_token:
+                raise ValueError(
+                    "HuggingFace token required for speaker diarization. "
+                    "Get one at https://huggingface.co/settings/tokens and "
+                    "accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1"
+                )
+
+            print("[TRANSCRIPTION] Loading speaker diarization pipeline...")
+            self._diarization_pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1",
+                use_auth_token=self.hf_token
+            )
+
+            # Move to appropriate device
+            if self.device == "cuda":
+                self._diarization_pipeline.to(torch.device("cuda"))
+
+        return self._diarization_pipeline
+
+    def transcribe_audio(self, audio_path: str) -> Dict:
+        """
+        Transcribe audio file using Whisper.
+
+        Args:
+            audio_path: Path to audio/video file
+
+        Returns:
+            Dictionary with transcription results including segments
+        """
+        model = self._load_whisper_model()
+
+        print(f"[TRANSCRIPTION] Transcribing audio: {audio_path}")
+        result = model.transcribe(
+            audio_path,
+            verbose=False,
+            language="en"
+        )
+
+        return result
+
+    def perform_diarization(self, audio_path: str) -> List[Dict]:
+        """
+        Perform speaker diarization on audio file.
+
+        Args:
+            audio_path: Path to audio/video file
+
+        Returns:
+            List of speaker segments with start time, end time, and speaker label
+        """
+        pipeline = self._load_diarization_pipeline()
+
+        print(f"[TRANSCRIPTION] Performing speaker diarization: {audio_path}")
+        diarization = pipeline(audio_path)
+
+        # Convert to list of segments
+        segments = []
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            segments.append({
+                'start': turn.start,
+                'end': turn.end,
+                'speaker': speaker
+            })
+
+        return segments
+
+    def merge_transcription_and_diarization(
+        self,
+        transcription: Dict,
+        diarization_segments: List[Dict]
+    ) -> List[Dict]:
+        """
+        Merge Whisper transcription with speaker diarization.
+
+        Args:
+            transcription: Whisper transcription result
+            diarization_segments: Speaker diarization segments
+
+        Returns:
+            List of segments with text and speaker labels
+        """
+        merged_segments = []
+
+        for segment in transcription['segments']:
+            seg_start = segment['start']
+            seg_end = segment['end']
+            seg_text = segment['text'].strip()
+
+            # Find overlapping speaker
+            speaker = self._find_speaker_for_segment(
+                seg_start, seg_end, diarization_segments
+            )
+
+            merged_segments.append({
+                'start': seg_start,
+                'end': seg_end,
+                'text': seg_text,
+                'speaker': speaker
+            })
+
+        return merged_segments
+
+    def _find_speaker_for_segment(
+        self,
+        start: float,
+        end: float,
+        diarization_segments: List[Dict]
+    ) -> str:
+        """
+        Find the speaker with the most overlap for a given time segment.
+
+        Args:
+            start: Segment start time
+            end: Segment end time
+            diarization_segments: List of speaker segments
+
+        Returns:
+            Speaker label with most overlap, or "UNKNOWN" if none found
+        """
+        max_overlap = 0
+        best_speaker = "UNKNOWN"
+
+        for dia_seg in diarization_segments:
+            # Calculate overlap
+            overlap_start = max(start, dia_seg['start'])
+            overlap_end = min(end, dia_seg['end'])
+            overlap = max(0, overlap_end - overlap_start)
+
+            if overlap > max_overlap:
+                max_overlap = overlap
+                best_speaker = dia_seg['speaker']
+
+        return best_speaker
+
+    def transcribe_with_speakers(
+        self,
+        video_path: str,
+        output_path: Optional[str] = None
+    ) -> Dict:
+        """
+        Complete transcription pipeline with speaker diarization.
+
+        Args:
+            video_path: Path to video file
+            output_path: Optional path to save transcript (defaults to video_path + .json)
+
+        Returns:
+            Dictionary with transcript segments and metadata
+        """
+        print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
+        print(f"[TRANSCRIPTION] Input file: {video_path}")
+
+        # Step 1: Transcribe with Whisper
+        transcription = self.transcribe_audio(video_path)
+
+        # Step 2: Perform speaker diarization
+        diarization_segments = self.perform_diarization(video_path)
+
+        # Step 3: Merge results
+        merged_segments = self.merge_transcription_and_diarization(
+            transcription, diarization_segments
+        )
+
+        # Prepare final output
+        result = {
+            'file': video_path,
+            'language': transcription.get('language', 'en'),
+            'segments': merged_segments,
+            'full_text': transcription['text'],
+            'num_speakers': len(set(seg['speaker'] for seg in merged_segments))
+        }
+
+        # Save to file if requested
+        if output_path is None:
+            output_path = video_path + '.transcript.json'
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, indent=2, ensure_ascii=False)
+
+        print(f"[TRANSCRIPTION] Transcript saved to: {output_path}")
+        print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+
+        return result
+
+    def format_transcript_as_text(self, segments: List[Dict]) -> str:
+        """
+        Format transcript segments as readable text.
+
+        Args:
+            segments: List of transcript segments with speaker labels
+
+        Returns:
+            Formatted transcript string
+        """
+        lines = []
+        current_speaker = None
+
+        for segment in segments:
+            speaker = segment['speaker']
+            text = segment['text']
+            timestamp = str(timedelta(seconds=int(segment['start'])))
+
+            # Add speaker label if changed
+            if speaker != current_speaker:
+                lines.append(f"\n[{speaker}] ({timestamp})")
+                current_speaker = speaker
+
+            lines.append(text)
+
+        return '\n'.join(lines)

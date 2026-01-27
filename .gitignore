@@ -3,6 +3,9 @@ recordings/
 data/
 meeting_schedule_cache.json
 
+# Environment variables (contains secrets)
+.env
+
 # Python
 __pycache__/
 *.py[cod]

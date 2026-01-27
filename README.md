@@ -222,6 +222,60 @@ python post_processor.py ./recordings/council_meeting_20260127_140000.mp4
 
 **Note:** This is an experimental feature, disabled by default. Original recordings are always preserved.
 
+### Transcription with Speaker Diarization
+
+Automatically transcribe recordings with speaker identification:
+
+```yaml
+# In docker-compose.yml
+environment:
+  - ENABLE_TRANSCRIPTION=true  # Enable automatic transcription
+  - WHISPER_MODEL=base  # Model size: tiny, base, small, medium, large
+  - HUGGINGFACE_TOKEN=your_token_here  # Required for speaker diarization
+```
+
+**How it works:**
+1. After recording completes, transcribes audio using OpenAI Whisper
+2. Identifies different speakers using pyannote.audio diarization
+3. Merges transcription with speaker labels
+4. Saves both JSON and formatted text versions:
+   ```
+   recordings/
+   ├── council_meeting_20260127_140000.mp4
+   ├── council_meeting_20260127_140000.mp4.transcript.json  # Detailed JSON with timestamps
+   └── council_meeting_20260127_140000.mp4.transcript.txt   # Readable text format
+   ```
+
+**Setup:**
+1. Get a HuggingFace token at https://huggingface.co/settings/tokens
+2. Accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1
+3. Set the token in your environment or docker-compose.yml
+
+**Model Performance (QNAP TS-464 estimates):**
+- `tiny`: ~15-20x realtime (12-16min for 4hr meeting) - Fast, decent accuracy
+- `base`: ~8-10x realtime (24-30min for 4hr meeting) - **Recommended**
+- `small`: ~3-4x realtime (60-80min for 4hr meeting) - Better accuracy, slower
+
+**Output format:**
+```
+[SPEAKER_00] (0:00:05)
+Good afternoon, everyone. Welcome to today's council meeting.
+
+[SPEAKER_01] (0:00:15)
+Thank you. I'd like to begin by...
+```
+
+**Manual testing:**
+```bash
+python -c "
+from transcription_service import TranscriptionService
+ts = TranscriptionService(whisper_model='base', hf_token='your_token')
+ts.transcribe_with_speakers('./recordings/council_meeting_20260127_140000.mp4')
+"
+```
+
+**Note:** Transcription is CPU-intensive. Processing happens after recording completes, so it won't interfere with live recording.
+
 ## Architecture
 
 The codebase is organized for maintainability and testability:

@@ -25,7 +25,10 @@ from config import (
     FFMPEG_COMMAND,
     ENABLE_POST_PROCESSING,
     POST_PROCESS_SILENCE_THRESHOLD_DB,
-    POST_PROCESS_MIN_SILENCE_DURATION
+    POST_PROCESS_MIN_SILENCE_DURATION,
+    ENABLE_TRANSCRIPTION,
+    WHISPER_MODEL,
+    HUGGINGFACE_TOKEN
 )
 import os
 
@@ -351,6 +354,36 @@ class RecordingService:
                 except Exception as e:
                     print(f"[POST-PROCESS] Error during post-processing: {e}")
                     print("[POST-PROCESS] Original recording preserved")
+
+            # Transcription (optional)
+            if ENABLE_TRANSCRIPTION:
+                print("\n[TRANSCRIPTION] Transcription enabled - generating transcript with speaker diarization")
+                try:
+                    from transcription_service import TranscriptionService
+                    transcriber = TranscriptionService(
+                        whisper_model=WHISPER_MODEL,
+                        hf_token=HUGGINGFACE_TOKEN
+                    )
+
+                    # Transcribe the video
+                    transcript_result = transcriber.transcribe_with_speakers(output_file)
+
+                    # Save formatted text version
+                    text_output = output_file + '.transcript.txt'
+                    formatted_text = transcriber.format_transcript_as_text(transcript_result['segments'])
+                    with open(text_output, 'w', encoding='utf-8') as f:
+                        f.write(formatted_text)
+
+                    print(f"[TRANSCRIPTION] Successfully transcribed with {transcript_result['num_speakers']} speakers")
+                    print(f"[TRANSCRIPTION] Transcript saved to: {text_output}")
+
+                    # Update database with transcript path
+                    if recording_id:
+                        db.update_recording_transcript(recording_id, output_file + '.transcript.json')
+
+                except Exception as e:
+                    print(f"[TRANSCRIPTION] Error during transcription: {e}")
+                    print("[TRANSCRIPTION] Recording preserved, transcription skipped")
 
             return True
 

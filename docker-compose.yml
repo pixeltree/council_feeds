@@ -12,4 +12,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=America/Edmonton
-      - ENABLE_POST_PROCESSING=false  # Set to 'true' to enable experimental segment splitting
+      - ENABLE_POST_PROCESSING=${ENABLE_POST_PROCESSING:-false}
+      - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-false}
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}

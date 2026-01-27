@@ -51,3 +51,8 @@ YTDLP_COMMAND = os.getenv("YTDLP_COMMAND", "yt-dlp")
 ENABLE_POST_PROCESSING = os.getenv("ENABLE_POST_PROCESSING", "false").lower() == "true"
 POST_PROCESS_SILENCE_THRESHOLD_DB = int(os.getenv("POST_PROCESS_SILENCE_THRESHOLD_DB", "-40"))
 POST_PROCESS_MIN_SILENCE_DURATION = int(os.getenv("POST_PROCESS_MIN_SILENCE_DURATION", "120"))  # seconds
+
+# Transcription settings
+ENABLE_TRANSCRIPTION = os.getenv("ENABLE_TRANSCRIPTION", "false").lower() == "true"
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # tiny, base, small, medium, large
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", None)  # Required for speaker diarization
