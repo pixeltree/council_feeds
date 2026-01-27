@@ -17,6 +17,36 @@
     <script>
         // Auto-refresh every 10 seconds
         setTimeout(() => location.reload(), 10000);
+
+        async function stopRecording() {
+            if (!confirm('Are you sure you want to stop the current recording?')) {
+                return;
+            }
+
+            const button = document.getElementById('stop-button');
+            button.disabled = true;
+            button.textContent = 'Stopping...';
+
+            try {
+                const response = await fetch('/api/stop-recording', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('Recording stop requested. The recording will end shortly.');
+                    location.reload();
+                } else {
+                    alert('Failed to stop recording: ' + (result.error || 'Unknown error'));
+                    button.disabled = false;
+                    button.textContent = 'Stop Recording';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                button.disabled = false;
+                button.textContent = 'Stop Recording';
+            }
+        }
     </script>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -50,6 +80,9 @@
                         <div class="text-gray-800 text-base font-bold">{{ current_recording.meeting_title or 'Unscheduled' }}</div>
                     </div>
                 </div>
+                <button id="stop-button" onclick="stopRecording()" class="mt-4 bg-red-600 hover:bg-red-700 text-white font-semibold px-5 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    Stop Recording
+                </button>
             {% else %}
                 <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-green-100 text-green-700 font-semibold text-sm">
                     <span class="w-2.5 h-2.5 rounded-full bg-green-700 pulse-dot"></span>
@@ -122,6 +155,7 @@
                     <span class="px-3 py-1 rounded-full text-xs font-semibold
                         {% if recording.status == 'completed' %}bg-green-100 text-green-700
                         {% elif recording.status == 'failed' %}bg-red-100 text-red-700
+                        {% elif recording.status == 'stopped' %}bg-yellow-100 text-yellow-700
                         {% else %}bg-orange-100 text-orange-700{% endif %}">
                         {{ recording.status.upper() }}
                     </span>

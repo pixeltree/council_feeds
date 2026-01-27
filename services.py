@@ -258,6 +258,9 @@ class RecordingService:
         self.ffmpeg_command = ffmpeg_command
         self.timezone = timezone
         self.stream_service = stream_service or StreamService()
+        self.current_process = None
+        self.current_recording_id = None
+        self.stop_requested = False
 
     def record_stream(
         self,
@@ -283,6 +286,8 @@ class RecordingService:
 
         # Create recording record in database
         recording_id = db.create_recording(meeting_id, output_file, stream_url, start_time)
+        self.current_recording_id = recording_id
+        self.stop_requested = False
         db.log_stream_status(stream_url, 'live', meeting_id, 'Recording started')
 
         # ffmpeg command to record HLS stream
@@ -301,6 +306,7 @@ class RecordingService:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
+            self.current_process = process
 
             print(f"Recording started (PID: {process.pid})")
 
@@ -310,13 +316,59 @@ class RecordingService:
                 # Check if stream is still live every 30 seconds
                 time.sleep(30)
 
+                # Check if stop was requested
+                if self.stop_requested:
+                    print("Stop requested by user. Stopping recording...")
+                    print("Sending interrupt signal to ffmpeg to close file properly...")
+                    db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
+
+                    # Send SIGINT (Ctrl+C) to ffmpeg for clean shutdown
+                    # This allows ffmpeg to properly close the file and write trailing data
+                    import signal
+                    try:
+                        process.send_signal(signal.SIGINT)
+                    except:
+                        # If SIGINT fails, use terminate
+                        process.terminate()
+
+                    # Wait up to 10 seconds for ffmpeg to finish writing
+                    print("Waiting for ffmpeg to finish writing file...")
+                    for i in range(10):
+                        time.sleep(1)
+                        if process.poll() is not None:
+                            print(f"Recording stopped cleanly after {i+1} seconds")
+                            break
+
+                    # If still running, force kill
+                    if process.poll() is None:
+                        print("Warning: ffmpeg did not stop gracefully, forcing kill...")
+                        process.kill()
+                        time.sleep(1)
+                    break
+
                 if not self.stream_service.is_stream_live(stream_url):
                     print("Stream is no longer live. Stopping recording...")
                     db.log_stream_status(stream_url, 'offline', meeting_id, 'Stream ended')
-                    process.terminate()
-                    time.sleep(5)
+
+                    # Send SIGINT for clean shutdown
+                    import signal
+                    try:
+                        process.send_signal(signal.SIGINT)
+                    except:
+                        process.terminate()
+
+                    # Wait for ffmpeg to finish writing
+                    print("Waiting for ffmpeg to finish writing file...")
+                    for i in range(10):
+                        time.sleep(1)
+                        if process.poll() is not None:
+                            print(f"Recording completed cleanly after {i+1} seconds")
+                            break
+
                     if process.poll() is None:
+                        print("Warning: forcing kill...")
                         process.kill()
+                        time.sleep(1)
                     break
 
                 # Check if process is still running
@@ -327,8 +379,13 @@ class RecordingService:
             end_time = datetime.now(self.timezone)
             print(f"Recording saved: {output_file}")
 
+            # Clean up process tracking
+            self.current_process = None
+            self.current_recording_id = None
+
             # Update recording status in database
-            db.update_recording(recording_id, end_time, 'completed')
+            status = 'completed' if not self.stop_requested else 'stopped'
+            db.update_recording(recording_id, end_time, status)
 
             # Log statistics
             if os.path.exists(output_file):
@@ -391,8 +448,23 @@ class RecordingService:
             error_msg = str(e)
             print(f"Error during recording: {error_msg}")
 
+            # Clean up process tracking
+            self.current_process = None
+            self.current_recording_id = None
+
             # Update recording as failed
             db.update_recording(recording_id, datetime.now(self.timezone), 'failed', error_msg)
             db.log_stream_status(stream_url, 'error', meeting_id, error_msg)
 
             return False
+
+    def stop_recording(self) -> bool:
+        """Request the current recording to stop."""
+        if self.current_process and self.current_process.poll() is None:
+            self.stop_requested = True
+            return True
+        return False
+
+    def is_recording(self) -> bool:
+        """Check if a recording is currently in progress."""
+        return self.current_process is not None and self.current_process.poll() is None
