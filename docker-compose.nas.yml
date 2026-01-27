@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  council-recorder:
+    build:
+      context: .
+      dockerfile: Dockerfile.rpi
+    container_name: calgary-council-recorder-rpi
+    volumes:
+      # Mount your NAS share for recordings
+      # Option 1: NFS mount (recommended)
+      - /mnt/nas/recordings:/app/recordings
+      
+      # Option 2: SMB/CIFS mount
+      # - /mnt/samba/recordings:/app/recordings
+      
+      # Local database (small, keep on SD card)
+      - ./data:/app/data
+      
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    environment:
+      - TZ=America/Edmonton
+      
+      # Recording settings optimized for NAS
+      - RECORDING_FORMAT=mkv
+      - ENABLE_SEGMENTED_RECORDING=true
+      - SEGMENT_DURATION=900              # 15 minutes
+      - RECORDING_RECONNECT=true
+      
+      # Disable CPU-intensive features
+      - ENABLE_TRANSCRIPTION=false
+      - ENABLE_POST_PROCESSING=false
+      
+      # Paths
+      - OUTPUT_DIR=/app/recordings
+      - DB_DIR=/app/data
+      
+    # Resource limits
+    mem_limit: 512m
+    mem_reservation: 256m
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Note: Make sure your NAS share is mounted BEFORE starting the container
+# See setup instructions below
