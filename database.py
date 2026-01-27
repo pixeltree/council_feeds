@@ -115,8 +115,27 @@ def init_database():
                 status TEXT NOT NULL,  -- 'recording', 'completed', 'failed'
                 error_message TEXT,
                 transcript_path TEXT,
+                is_segmented INTEGER DEFAULT 0,  -- 0 = not segmented, 1 = segmented
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (meeting_id) REFERENCES meetings(id)
+            )
+        """)
+
+        # Segments table - tracks segments created from post-processing
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS segments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recording_id INTEGER NOT NULL,
+                segment_number INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                start_time_seconds REAL NOT NULL,
+                end_time_seconds REAL NOT NULL,
+                duration_seconds REAL NOT NULL,
+                file_size_bytes INTEGER,
+                transcript_path TEXT,
+                has_transcript INTEGER DEFAULT 0,  -- 0 = no transcript, 1 = has transcript
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (recording_id) REFERENCES recordings(id)
             )
         """)
 
@@ -161,6 +180,11 @@ def init_database():
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_stream_log_timestamp
             ON stream_status_log(timestamp)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_segments_recording_id
+            ON segments(recording_id)
         """)
 
 
@@ -437,6 +461,7 @@ def get_recent_recordings(limit: int = 10) -> List[Dict]:
                 r.file_size_bytes,
                 r.status,
                 r.transcript_path,
+                r.is_segmented,
                 m.title as meeting_title,
                 m.meeting_datetime
             FROM recordings r
@@ -456,11 +481,149 @@ def get_recent_recordings(limit: int = 10) -> List[Dict]:
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
                 'transcript_path': row['transcript_path'],
+                'is_segmented': row['is_segmented'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']
             })
 
         return recordings
+
+
+def get_recording_by_id(recording_id: int) -> Optional[Dict]:
+    """Get a recording by its ID."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                r.id,
+                r.file_path,
+                r.start_time,
+                r.end_time,
+                r.duration_seconds,
+                r.file_size_bytes,
+                r.status,
+                r.transcript_path,
+                r.is_segmented,
+                m.id as meeting_id,
+                m.title as meeting_title,
+                m.meeting_datetime
+            FROM recordings r
+            LEFT JOIN meetings m ON r.meeting_id = m.id
+            WHERE r.id = ?
+        """, (recording_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return {
+                'id': row['id'],
+                'file_path': row['file_path'],
+                'start_time': row['start_time'],
+                'end_time': row['end_time'],
+                'duration_seconds': row['duration_seconds'],
+                'file_size_bytes': row['file_size_bytes'],
+                'status': row['status'],
+                'transcript_path': row['transcript_path'],
+                'is_segmented': row['is_segmented'],
+                'meeting_id': row['meeting_id'],
+                'meeting_title': row['meeting_title'],
+                'meeting_datetime': row['meeting_datetime']
+            }
+        return None
+
+
+def create_segment(recording_id: int, segment_number: int, file_path: str,
+                  start_time: float, end_time: float, duration: float,
+                  file_size_bytes: Optional[int] = None) -> int:
+    """Create a new segment record and return its ID."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO segments (
+                recording_id, segment_number, file_path,
+                start_time_seconds, end_time_seconds, duration_seconds,
+                file_size_bytes, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            recording_id,
+            segment_number,
+            file_path,
+            start_time,
+            end_time,
+            duration,
+            file_size_bytes,
+            datetime.now(CALGARY_TZ).isoformat()
+        ))
+
+        return cursor.lastrowid
+
+
+def get_segments_by_recording(recording_id: int) -> List[Dict]:
+    """Get all segments for a recording."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                id,
+                recording_id,
+                segment_number,
+                file_path,
+                start_time_seconds,
+                end_time_seconds,
+                duration_seconds,
+                file_size_bytes,
+                transcript_path,
+                has_transcript,
+                created_at
+            FROM segments
+            WHERE recording_id = ?
+            ORDER BY segment_number ASC
+        """, (recording_id,))
+
+        segments = []
+        for row in cursor.fetchall():
+            segments.append({
+                'id': row['id'],
+                'recording_id': row['recording_id'],
+                'segment_number': row['segment_number'],
+                'file_path': row['file_path'],
+                'start_time_seconds': row['start_time_seconds'],
+                'end_time_seconds': row['end_time_seconds'],
+                'duration_seconds': row['duration_seconds'],
+                'file_size_bytes': row['file_size_bytes'],
+                'transcript_path': row['transcript_path'],
+                'has_transcript': row['has_transcript'],
+                'created_at': row['created_at']
+            })
+
+        return segments
+
+
+def mark_recording_segmented(recording_id: int):
+    """Mark a recording as having been segmented."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE recordings
+            SET is_segmented = 1
+            WHERE id = ?
+        """, (recording_id,))
+
+
+def update_segment_transcript(segment_id: int, transcript_path: str):
+    """Update segment with transcript file path."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE segments
+            SET transcript_path = ?, has_transcript = 1
+            WHERE id = ?
+        """, (transcript_path, segment_id))
 
 
 if __name__ == '__main__':

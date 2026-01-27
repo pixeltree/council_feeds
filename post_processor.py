@@ -11,8 +11,9 @@ import os
 import subprocess
 import json
 from datetime import datetime
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 import re
+import database as db
 
 
 class PostProcessor:
@@ -179,12 +180,13 @@ class PostProcessor:
             print(f"[POST-PROCESS] Error extracting segment: {e}")
             return False
 
-    def process_recording(self, recording_path: str) -> Dict:
+    def process_recording(self, recording_path: str, recording_id: Optional[int] = None) -> Dict:
         """
         Process a recording: detect breaks and split into segments.
 
         Args:
             recording_path: Path to the original recording file
+            recording_id: Optional database recording ID to track segments
 
         Returns:
             Dictionary with processing results
@@ -244,18 +246,48 @@ class PostProcessor:
             print(f"[POST-PROCESS] Extracting segment {i}/{len(segments)}: {start:.1f}s - {end:.1f}s ({segment_duration/60:.1f} min)")
 
             if self.extract_segment(recording_path, output_path, start, end):
-                file_size = os.path.getsize(output_path) / (1024**2)  # MB
-                segment_files.append({
+                file_size_bytes = os.path.getsize(output_path)
+                file_size_mb = file_size_bytes / (1024**2)  # MB
+
+                segment_info = {
                     "path": output_path,
                     "segment": i,
                     "start": start,
                     "end": end,
                     "duration": segment_duration,
-                    "size_mb": file_size
-                })
-                print(f"[POST-PROCESS] ✓ Segment {i} created: {file_size:.1f} MB")
+                    "size_mb": file_size_mb,
+                    "size_bytes": file_size_bytes
+                }
+                segment_files.append(segment_info)
+
+                # Save segment to database if recording_id provided
+                if recording_id:
+                    try:
+                        segment_id = db.create_segment(
+                            recording_id=recording_id,
+                            segment_number=i,
+                            file_path=output_path,
+                            start_time=start,
+                            end_time=end,
+                            duration=segment_duration,
+                            file_size_bytes=file_size_bytes
+                        )
+                        segment_info['db_id'] = segment_id
+                        print(f"[POST-PROCESS] ✓ Segment {i} created: {file_size_mb:.1f} MB (DB ID: {segment_id})")
+                    except Exception as e:
+                        print(f"[POST-PROCESS] ✓ Segment {i} created: {file_size_mb:.1f} MB (DB save failed: {e})")
+                else:
+                    print(f"[POST-PROCESS] ✓ Segment {i} created: {file_size_mb:.1f} MB")
             else:
                 print(f"[POST-PROCESS] ✗ Failed to create segment {i}")
+
+        # Mark recording as segmented in database
+        if recording_id and len(segment_files) > 0:
+            try:
+                db.mark_recording_segmented(recording_id)
+                print(f"[POST-PROCESS] Recording marked as segmented in database")
+            except Exception as e:
+                print(f"[POST-PROCESS] Warning: Could not mark recording as segmented: {e}")
 
         print(f"\n[POST-PROCESS] ========================================")
         print(f"[POST-PROCESS] Processing complete")
