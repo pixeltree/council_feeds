@@ -5,7 +5,8 @@ services:
     build: .
     container_name: calgary-council-recorder
     volumes:
-      - ./recordings:/recordings
+      - ./recordings:/app/recordings
+      - ./data:/app/data
     restart: unless-stopped
     environment:
       - TZ=America/Edmonton
