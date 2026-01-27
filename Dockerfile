@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install ffmpeg
+# Install ffmpeg and ffprobe
 RUN apt-get update && \
     apt-get install -y ffmpeg && \
     apt-get clean && \
@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 COPY main.py .
 COPY database.py .
 COPY web_server.py .
+COPY services.py .
+COPY config.py .
+COPY post_processor.py .
 
 # Create recordings directory
 RUN mkdir -p /recordings

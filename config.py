@@ -46,3 +46,8 @@ WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
 # External command settings
 FFMPEG_COMMAND = os.getenv("FFMPEG_COMMAND", "ffmpeg")
 YTDLP_COMMAND = os.getenv("YTDLP_COMMAND", "yt-dlp")
+
+# Post-processing settings (experimental)
+ENABLE_POST_PROCESSING = os.getenv("ENABLE_POST_PROCESSING", "false").lower() == "true"
+POST_PROCESS_SILENCE_THRESHOLD_DB = int(os.getenv("POST_PROCESS_SILENCE_THRESHOLD_DB", "-40"))
+POST_PROCESS_MIN_SILENCE_DURATION = int(os.getenv("POST_PROCESS_MIN_SILENCE_DURATION", "120"))  # seconds

@@ -12,3 +12,4 @@ services:
     restart: unless-stopped
     environment:
       - TZ=America/Edmonton
+      - ENABLE_POST_PROCESSING=false  # Set to 'true' to enable experimental segment splitting
