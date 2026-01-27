@@ -12,14 +12,9 @@ import os
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from contextlib import contextmanager
-import pytz
 
-# Database configuration
-DB_DIR = "./data"
-DB_PATH = os.path.join(DB_DIR, "council_feeds.db")
-
-# Calgary timezone for consistency
-CALGARY_TZ = pytz.timezone('America/Edmonton')
+# Import configuration
+from config import DB_DIR, DB_PATH, CALGARY_TZ
 
 
 def parse_datetime_from_db(dt_str: str) -> datetime:
@@ -31,6 +26,40 @@ def parse_datetime_from_db(dt_str: str) -> datetime:
     return dt
 
 
+class Database:
+    """Database wrapper class for improved testability."""
+
+    def __init__(self, db_path: str = DB_PATH, db_dir: str = DB_DIR):
+        """
+        Initialize database connection manager.
+
+        Args:
+            db_path: Path to SQLite database file
+            db_dir: Directory containing the database
+        """
+        self.db_path = db_path
+        self.db_dir = db_dir
+
+    def ensure_db_directory(self):
+        """Ensure the database directory exists."""
+        os.makedirs(self.db_dir, exist_ok=True)
+
+    @contextmanager
+    def get_connection(self):
+        """Context manager for database connections."""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+# Module-level functions for backward compatibility
 def ensure_db_directory():
     """Ensure the database directory exists."""
     os.makedirs(DB_DIR, exist_ok=True)
