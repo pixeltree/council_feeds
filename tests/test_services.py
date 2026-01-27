@@ -90,6 +90,7 @@ class TestCalendarService:
         assert meetings == []
 
     @responses.activate
+    @patch('services.db.get_metadata')
     @patch('services.db.save_meetings')
     @patch('services.db.set_metadata')
     @patch('services.db.get_upcoming_meetings')
@@ -98,6 +99,7 @@ class TestCalendarService:
         mock_get_meetings,
         mock_set_metadata,
         mock_save_meetings,
+        mock_get_metadata,
         api_response_data
     ):
         """Test forcing a refresh from API."""
@@ -108,6 +110,7 @@ class TestCalendarService:
             status=200
         )
 
+        mock_get_metadata.return_value = None  # No cached data
         mock_save_meetings.return_value = 2
         mock_get_meetings.return_value = []
 
