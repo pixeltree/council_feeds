@@ -7,12 +7,9 @@ Provides a simple web interface to view recording status and upcoming meetings.
 from flask import Flask, render_template_string, jsonify
 import database as db
 from datetime import datetime
-import pytz
-import os
+from config import CALGARY_TZ, WEB_HOST, WEB_PORT
 
 app = Flask(__name__)
-
-CALGARY_TZ = pytz.timezone('America/Edmonton')
 
 # HTML template for the status page
 HTML_TEMPLATE = """
@@ -450,11 +447,13 @@ def api_status():
     })
 
 
-def run_server(host='0.0.0.0', port=5000):
+def run_server(host=None, port=None):
     """Run the Flask web server."""
+    host = host or WEB_HOST
+    port = port or WEB_PORT
     app.run(host=host, port=port, debug=False, use_reloader=False)
 
 
 if __name__ == '__main__':
-    print("Starting web server on http://0.0.0.0:5000")
+    print(f"Starting web server on http://{WEB_HOST}:{WEB_PORT}")
     run_server()
