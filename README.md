@@ -186,6 +186,42 @@ Override defaults using environment variables:
 - `WEB_HOST` - Web server host (default: 0.0.0.0)
 - `WEB_PORT` - Web server port (default: 5000)
 
+### Post-Processing (Experimental)
+
+Automatically split recordings into segments by detecting break periods:
+
+```yaml
+# In docker-compose.yml
+environment:
+  - ENABLE_POST_PROCESSING=true  # Enable automatic segmentation
+  - POST_PROCESS_SILENCE_THRESHOLD_DB=-40  # Audio threshold in dB
+  - POST_PROCESS_MIN_SILENCE_DURATION=120  # Min silence duration (seconds)
+```
+
+**How it works:**
+1. After recording completes, analyzes audio for silent periods (breaks)
+2. Splits recording into segments at break boundaries
+3. Creates organized folder structure:
+   ```
+   recordings/
+   └── council_meeting_20260127_140000_segments/
+       ├── council_meeting_20260127_140000_original.mp4  # Original preserved
+       ├── council_meeting_20260127_140000_segment_1.mp4  # Before break
+       └── council_meeting_20260127_140000_segment_2.mp4  # After break
+   ```
+
+**Performance:**
+- Very lightweight (no re-encoding, codec copy only)
+- ~15 minutes processing for a 4-hour meeting
+- Minimal CPU/RAM usage (~200-500 MB)
+
+**Manual testing:**
+```bash
+python post_processor.py ./recordings/council_meeting_20260127_140000.mp4
+```
+
+**Note:** This is an experimental feature, disabled by default. Original recordings are always preserved.
+
 ## Architecture
 
 The codebase is organized for maintainability and testability:
@@ -198,6 +234,7 @@ The codebase is organized for maintainability and testability:
 │   ├── StreamService        # Stream detection
 │   └── RecordingService     # Recording management
 ├── database.py         # Database operations
+├── post_processor.py   # Segment splitting (experimental)
 ├── main.py            # Application entry point
 ├── web_server.py      # Flask dashboard
 └── tests/             # Comprehensive test suite

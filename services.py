@@ -22,7 +22,10 @@ from config import (
     MEETING_BUFFER_AFTER,
     YTDLP_COMMAND,
     OUTPUT_DIR,
-    FFMPEG_COMMAND
+    FFMPEG_COMMAND,
+    ENABLE_POST_PROCESSING,
+    POST_PROCESS_SILENCE_THRESHOLD_DB,
+    POST_PROCESS_MIN_SILENCE_DURATION
 )
 import os
 
@@ -329,6 +332,25 @@ class RecordingService:
                 file_size = os.path.getsize(output_file)
                 duration = int((end_time - start_time).total_seconds())
                 print(f"Duration: {duration}s, Size: {file_size / (1024**2):.1f} MB")
+
+            # Post-processing (experimental)
+            if ENABLE_POST_PROCESSING:
+                print("\n[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
+                try:
+                    from post_processor import PostProcessor
+                    processor = PostProcessor(
+                        silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
+                        min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
+                        ffmpeg_command=self.ffmpeg_command
+                    )
+                    result = processor.process_recording(output_file)
+                    if result.get('success'):
+                        print(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
+                    else:
+                        print(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
+                except Exception as e:
+                    print(f"[POST-PROCESS] Error during post-processing: {e}")
+                    print("[POST-PROCESS] Original recording preserved")
 
             return True
 

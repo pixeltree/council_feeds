@@ -1,0 +1,288 @@
+#!/usr/bin/env python3
+"""
+Post-processing service for splitting council meeting recordings into segments.
+Removes silent/break periods and creates separate files for each active segment.
+
+EXPERIMENTAL: This is a best-effort approach using silence detection.
+Original recordings are always preserved.
+"""
+
+import os
+import subprocess
+import json
+from datetime import datetime
+from typing import List, Dict, Tuple
+import re
+
+
+class PostProcessor:
+    """Post-processes recordings to detect and split segments."""
+
+    def __init__(
+        self,
+        silence_threshold_db: int = -40,
+        min_silence_duration: int = 120,  # 2 minutes
+        ffmpeg_command: str = "ffmpeg"
+    ):
+        """
+        Initialize post-processor.
+
+        Args:
+            silence_threshold_db: Audio level (in dB) to consider as silence.
+                                 More negative = stricter (e.g., -50dB is very quiet)
+            min_silence_duration: Minimum silence duration (seconds) to split on.
+                                 Breaks are typically 10-30 minutes.
+            ffmpeg_command: Path to ffmpeg binary
+        """
+        self.silence_threshold_db = silence_threshold_db
+        self.min_silence_duration = min_silence_duration
+        self.ffmpeg_command = ffmpeg_command
+
+    def detect_silent_periods(self, video_path: str) -> List[Tuple[float, float]]:
+        """
+        Detect silent periods in the video that likely represent breaks.
+
+        Returns:
+            List of (start_time, end_time) tuples in seconds
+        """
+        print(f"[POST-PROCESS] Analyzing audio for silent periods...")
+        print(f"[POST-PROCESS] Threshold: {self.silence_threshold_db}dB, Min duration: {self.min_silence_duration}s")
+
+        cmd = [
+            self.ffmpeg_command,
+            '-i', video_path,
+            '-af', f'silencedetect=noise={self.silence_threshold_db}dB:d={self.min_silence_duration}',
+            '-f', 'null',
+            '-'
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout for analysis
+            )
+
+            # Parse silence detection output from stderr
+            silence_starts = []
+            silence_ends = []
+
+            for line in result.stderr.split('\n'):
+                if 'silencedetect' in line:
+                    # Look for silence_start
+                    start_match = re.search(r'silence_start: ([\d.]+)', line)
+                    if start_match:
+                        silence_starts.append(float(start_match.group(1)))
+
+                    # Look for silence_end
+                    end_match = re.search(r'silence_end: ([\d.]+)', line)
+                    if end_match:
+                        silence_ends.append(float(end_match.group(1)))
+
+            # Pair up starts and ends
+            silent_periods = []
+            for start, end in zip(silence_starts, silence_ends):
+                duration = end - start
+                silent_periods.append((start, end))
+                print(f"[POST-PROCESS] Found silence: {start:.1f}s - {end:.1f}s (duration: {duration:.1f}s)")
+
+            return silent_periods
+
+        except subprocess.TimeoutExpired:
+            print(f"[POST-PROCESS] Warning: Analysis timed out")
+            return []
+        except Exception as e:
+            print(f"[POST-PROCESS] Error detecting silent periods: {e}")
+            return []
+
+    def get_video_duration(self, video_path: str) -> float:
+        """Get total duration of video in seconds."""
+        cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'json',
+            video_path
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            data = json.loads(result.stdout)
+            return float(data['format']['duration'])
+        except Exception as e:
+            print(f"[POST-PROCESS] Warning: Could not get video duration: {e}")
+            return 0
+
+    def calculate_segments(self, duration: float, silent_periods: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+        """
+        Calculate active segments (non-silent periods) to extract.
+
+        Args:
+            duration: Total video duration in seconds
+            silent_periods: List of (start, end) tuples for silent periods
+
+        Returns:
+            List of (start, end) tuples for active segments
+        """
+        if not silent_periods:
+            print("[POST-PROCESS] No breaks detected - keeping original file")
+            return []
+
+        segments = []
+        last_end = 0
+
+        for silence_start, silence_end in silent_periods:
+            # Add segment before this silence (if significant)
+            if silence_start - last_end > 30:  # At least 30 seconds of content
+                segments.append((last_end, silence_start))
+            last_end = silence_end
+
+        # Add final segment after last silence
+        if duration - last_end > 30:
+            segments.append((last_end, duration))
+
+        return segments
+
+    def extract_segment(self, input_path: str, output_path: str, start: float, end: float) -> bool:
+        """
+        Extract a segment from the video without re-encoding.
+
+        Args:
+            input_path: Source video file
+            output_path: Output file for segment
+            start: Start time in seconds
+            end: End time in seconds
+
+        Returns:
+            True if successful
+        """
+        duration = end - start
+
+        cmd = [
+            self.ffmpeg_command,
+            '-i', input_path,
+            '-ss', str(start),
+            '-t', str(duration),
+            '-c', 'copy',  # No re-encoding
+            '-avoid_negative_ts', '1',
+            output_path
+        ]
+
+        try:
+            subprocess.run(cmd, capture_output=True, check=True, timeout=duration * 2)
+            return True
+        except Exception as e:
+            print(f"[POST-PROCESS] Error extracting segment: {e}")
+            return False
+
+    def process_recording(self, recording_path: str) -> Dict:
+        """
+        Process a recording: detect breaks and split into segments.
+
+        Args:
+            recording_path: Path to the original recording file
+
+        Returns:
+            Dictionary with processing results
+        """
+        print(f"\n[POST-PROCESS] ========================================")
+        print(f"[POST-PROCESS] Starting post-processing")
+        print(f"[POST-PROCESS] Input: {recording_path}")
+        print(f"[POST-PROCESS] ========================================\n")
+
+        if not os.path.exists(recording_path):
+            print(f"[POST-PROCESS] Error: File not found: {recording_path}")
+            return {"success": False, "error": "File not found"}
+
+        # Get video duration
+        duration = self.get_video_duration(recording_path)
+        if duration == 0:
+            print(f"[POST-PROCESS] Error: Could not determine video duration")
+            return {"success": False, "error": "Could not determine duration"}
+
+        print(f"[POST-PROCESS] Total duration: {duration:.1f}s ({duration/60:.1f} minutes)")
+
+        # Detect silent periods (breaks)
+        silent_periods = self.detect_silent_periods(recording_path)
+
+        # Calculate active segments
+        segments = self.calculate_segments(duration, silent_periods)
+
+        if not segments:
+            print(f"[POST-PROCESS] No segmentation needed")
+            return {
+                "success": True,
+                "segments_created": 0,
+                "message": "No breaks detected or breaks too short to split"
+            }
+
+        # Create output directory for segments
+        base_name = os.path.splitext(os.path.basename(recording_path))[0]
+        output_dir = os.path.join(os.path.dirname(recording_path), f"{base_name}_segments")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Copy original to segments folder for safety
+        original_dest = os.path.join(output_dir, f"{base_name}_original.mp4")
+        print(f"[POST-PROCESS] Preserving original: {original_dest}")
+
+        try:
+            import shutil
+            shutil.copy2(recording_path, original_dest)
+        except Exception as e:
+            print(f"[POST-PROCESS] Warning: Could not copy original: {e}")
+
+        # Extract segments
+        segment_files = []
+        for i, (start, end) in enumerate(segments, 1):
+            segment_duration = end - start
+            output_path = os.path.join(output_dir, f"{base_name}_segment_{i}.mp4")
+
+            print(f"[POST-PROCESS] Extracting segment {i}/{len(segments)}: {start:.1f}s - {end:.1f}s ({segment_duration/60:.1f} min)")
+
+            if self.extract_segment(recording_path, output_path, start, end):
+                file_size = os.path.getsize(output_path) / (1024**2)  # MB
+                segment_files.append({
+                    "path": output_path,
+                    "segment": i,
+                    "start": start,
+                    "end": end,
+                    "duration": segment_duration,
+                    "size_mb": file_size
+                })
+                print(f"[POST-PROCESS] ✓ Segment {i} created: {file_size:.1f} MB")
+            else:
+                print(f"[POST-PROCESS] ✗ Failed to create segment {i}")
+
+        print(f"\n[POST-PROCESS] ========================================")
+        print(f"[POST-PROCESS] Processing complete")
+        print(f"[POST-PROCESS] Segments folder: {output_dir}")
+        print(f"[POST-PROCESS] Segments created: {len(segment_files)}/{len(segments)}")
+        print(f"[POST-PROCESS] Original preserved: {original_dest}")
+        print(f"[POST-PROCESS] ========================================\n")
+
+        return {
+            "success": True,
+            "segments_created": len(segment_files),
+            "output_dir": output_dir,
+            "segment_files": segment_files,
+            "original_preserved": original_dest
+        }
+
+
+if __name__ == "__main__":
+    # Example usage / testing
+    import sys
+
+    if len(sys.argv) < 2:
+        print("Usage: python post_processor.py <video_file>")
+        sys.exit(1)
+
+    video_file = sys.argv[1]
+    processor = PostProcessor()
+    result = processor.process_recording(video_file)
+
+    if result["success"]:
+        print(f"\nSuccess! Created {result.get('segments_created', 0)} segments")
+    else:
+        print(f"\nFailed: {result.get('error', 'Unknown error')}")
