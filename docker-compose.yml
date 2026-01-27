@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  council-recorder:
+    build: .
+    container_name: calgary-council-recorder
+    volumes:
+      - ./recordings:/recordings
+    restart: unless-stopped
+    environment:
+      - TZ=America/Edmonton
