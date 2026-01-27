@@ -281,7 +281,11 @@ class TestTranscriptionIntegration:
 
         mock_process = MagicMock()
         mock_process.pid = 12345
-        mock_process.poll.side_effect = [None, 0]
+        call_count = {"count": 0}
+        def poll_side_effect():
+            call_count["count"] += 1
+            return None if call_count["count"] == 1 else 0
+        mock_process.poll.side_effect = poll_side_effect
         mock_popen.return_value = mock_process
 
         # Setup transcription mocks
@@ -345,7 +349,11 @@ class TestTranscriptionIntegration:
 
         mock_process = MagicMock()
         mock_process.pid = 12345
-        mock_process.poll.side_effect = [None, 0]
+        call_count = {"count": 0}
+        def poll_side_effect():
+            call_count["count"] += 1
+            return None if call_count["count"] == 1 else 0
+        mock_process.poll.side_effect = poll_side_effect
         mock_popen.return_value = mock_process
 
         # Setup stream service
@@ -395,7 +403,11 @@ class TestPostProcessingIntegration:
 
         mock_process = MagicMock()
         mock_process.pid = 12345
-        mock_process.poll.side_effect = [None, 0]
+        call_count = {"count": 0}
+        def poll_side_effect():
+            call_count["count"] += 1
+            return None if call_count["count"] == 1 else 0
+        mock_process.poll.side_effect = poll_side_effect
         mock_popen.return_value = mock_process
 
         # Setup post-processor mocks

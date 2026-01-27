@@ -318,10 +318,14 @@ class TestRecordingService:
         mock_find_meeting.return_value = None
         mock_getsize.return_value = 1024 * 1024  # 1 MB
 
-        # Mock process that ends after first check
+        # Mock process that ends after send_signal
         mock_process = MagicMock()
         mock_process.pid = 12345
-        mock_process.poll.side_effect = [None, 0]  # Running, then ended
+        call_count = {'count': 0}
+        def poll_side_effect():
+            call_count['count'] += 1
+            return None if call_count['count'] == 1 else 0
+        mock_process.poll.side_effect = poll_side_effect
         mock_popen.return_value = mock_process
 
         # Mock stream service
@@ -362,3 +366,102 @@ class TestRecordingService:
         # Should update recording as failed
         call_args = mock_update_recording.call_args
         assert call_args[0][2] == 'failed'
+
+    def test_stop_recording_when_not_recording(self, temp_output_dir):
+        """Test stop_recording returns False when not recording."""
+        service = RecordingService(output_dir=temp_output_dir)
+        result = service.stop_recording()
+        assert result is False
+
+    def test_is_recording_false_when_not_recording(self, temp_output_dir):
+        """Test is_recording returns False when no recording is active."""
+        service = RecordingService(output_dir=temp_output_dir)
+        assert service.is_recording() is False
+
+    @patch('services.subprocess.Popen')
+    def test_is_recording_true_when_recording(self, mock_popen, temp_output_dir):
+        """Test is_recording returns True when recording is active."""
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None  # Still running
+        service = RecordingService(output_dir=temp_output_dir)
+        service.current_process = mock_process
+        assert service.is_recording() is True
+
+    @patch('services.subprocess.Popen')
+    def test_is_recording_false_when_process_ended(self, mock_popen, temp_output_dir):
+        """Test is_recording returns False when process has ended."""
+        mock_process = MagicMock()
+        mock_process.poll.return_value = 0  # Process ended
+        service = RecordingService(output_dir=temp_output_dir)
+        service.current_process = mock_process
+        assert service.is_recording() is False
+
+    @patch('time.sleep')
+    @patch('services.subprocess.Popen')
+    @patch('services.db.create_recording')
+    @patch('services.db.update_recording')
+    @patch('services.db.log_stream_status')
+    @patch('services.db.find_meeting_by_datetime')
+    @patch('os.path.getsize')
+    def test_stop_recording_during_active_recording(
+        self,
+        mock_getsize,
+        mock_find_meeting,
+        mock_log_status,
+        mock_update_recording,
+        mock_create_recording,
+        mock_popen,
+        mock_sleep,
+        temp_output_dir
+    ):
+        """Test stopping a recording via stop_recording()."""
+        import threading
+
+        mock_create_recording.return_value = 1
+        mock_find_meeting.return_value = None
+        mock_getsize.return_value = 1024 * 1024
+
+        recording_started = threading.Event()
+        stop_requested = threading.Event()
+
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+
+        def poll_side_effect():
+            return 0 if stop_requested.is_set() else None
+        mock_process.poll.side_effect = poll_side_effect
+
+        def send_signal_side_effect(sig):
+            stop_requested.set()
+        mock_process.send_signal.side_effect = send_signal_side_effect
+
+        def popen_side_effect(*args, **kwargs):
+            recording_started.set()
+            return mock_process
+        mock_popen.side_effect = popen_side_effect
+
+        mock_stream_service = Mock()
+        mock_stream_service.is_stream_live.return_value = True
+
+        service = RecordingService(
+            output_dir=temp_output_dir,
+            stream_service=mock_stream_service
+        )
+
+        recording_thread = threading.Thread(
+            target=service.record_stream,
+            args=('https://example.com/stream.m3u8',)
+        )
+        recording_thread.start()
+
+        assert recording_started.wait(timeout=2), "Recording did not start"
+        assert service.is_recording() is True
+
+        result = service.stop_recording()
+        assert result is True
+
+        recording_thread.join(timeout=5)
+
+        mock_process.send_signal.assert_called()
+        call_args = mock_update_recording.call_args
+        assert call_args[0][2] == 'stopped'
