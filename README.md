@@ -1,5 +1,9 @@
 # Calgary Council Stream Recorder
 
+[![Tests](https://github.com/pixeltree/council_feeds/actions/workflows/test.yml/badge.svg)](https://github.com/pixeltree/council_feeds/actions/workflows/test.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 Automatically monitors and records Calgary City Council webcasts when they go live, using smart scheduling based on the official meeting calendar.
 
 ## Features
@@ -192,6 +196,39 @@ chmod 755 ./recordings
 - **Council Webcasts**: https://www.calgary.ca/council/council-and-committee-webcasts.html
 - **Stream Player**: https://video.isilive.ca/play/calgarycc/live
 - **Stream Provider**: ISILive
+
+## Testing
+
+The project includes a comprehensive test suite with 43 tests covering all core functionality.
+
+### Run Tests
+
+```bash
+# Install test dependencies
+pip install -r requirements.txt
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run with coverage
+python -m pytest tests/ --cov=. --cov-report=html
+
+# Run only unit tests
+python -m pytest tests/ -m unit
+
+# Run only integration tests
+python -m pytest tests/ -m integration
+```
+
+See [TESTING.md](TESTING.md) for detailed testing documentation.
+
+### Continuous Integration
+
+Tests run automatically on every push and pull request via GitHub Actions:
+- Python 3.9, 3.10, 3.11, 3.12
+- Unit and integration tests
+- Code coverage reporting
+- Linting checks (optional)
 
 ## Portability
 
