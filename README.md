@@ -4,6 +4,7 @@ Automatically monitors and records Calgary City Council webcasts when they go li
 
 ## Features
 
+- **Web Dashboard**: Real-time monitoring interface showing current status, statistics, and upcoming meetings
 - **Smart Scheduling**: Uses Calgary Open Data API to fetch official meeting schedules
 - **Dynamic Polling**: Active monitoring during meeting windows, idle polling otherwise
 - **SQLite Database**: Tracks meetings, recordings, and stream status history
@@ -33,12 +34,23 @@ Automatically monitors and records Calgary City Council webcasts when they go li
 docker-compose up --build -d
 ```
 
-2. View logs:
+2. View the web dashboard:
+```
+http://localhost:5000
+```
+
+The dashboard shows:
+- Current recording status (live or monitoring)
+- Recording statistics (total recordings, size, etc.)
+- Upcoming council meetings
+- Recent recordings with duration and file size
+
+3. View logs:
 ```bash
 docker-compose logs -f
 ```
 
-3. Stop the recorder:
+4. Stop the recorder:
 ```bash
 docker-compose down
 ```
@@ -59,6 +71,11 @@ pip install yt-dlp
 3. Run the script:
 ```bash
 python3 main.py
+```
+
+4. View the web dashboard:
+```
+http://localhost:5000
 ```
 
 ## Configuration

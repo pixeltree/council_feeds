@@ -16,9 +16,14 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 
 # Copy application code
 COPY main.py .
+COPY database.py .
+COPY web_server.py .
 
 # Create recordings directory
 RUN mkdir -p /recordings
+
+# Expose web interface port
+EXPOSE 5000
 
 # Run the application
 CMD ["python", "-u", "main.py"]
