@@ -6,6 +6,75 @@
 
 Automatically monitors and records Calgary City Council webcasts when they go live, using smart scheduling based on the official meeting calendar.
 
+## Quick Start
+
+### Development & Testing
+
+```bash
+# Clone and install dependencies
+git clone <repository>
+cd council_feeds
+pip install -r requirements.txt
+
+# Run tests (recommended before making changes)
+python -m pytest tests/ -v
+
+# Run the application
+python main.py
+
+# View web dashboard at http://localhost:5000
+```
+
+### Production with Docker
+
+```bash
+# Build and start
+docker-compose up --build -d
+
+# View dashboard at http://localhost:5000
+# View logs
+docker-compose logs -f
+```
+
+## Testing
+
+The project includes **43 comprehensive tests** covering all core functionality.
+
+### Run Tests Locally
+
+```bash
+# Install dependencies (includes test packages)
+pip install -r requirements.txt
+
+# Run all tests
+python -m pytest tests/ -v
+
+# Run with coverage report
+python -m pytest tests/ --cov=. --cov-report=html
+
+# Run specific test types
+python -m pytest tests/ -m unit           # Unit tests only
+python -m pytest tests/ -m integration    # Integration tests only
+python -m pytest tests/ -m slow           # Slow tests only
+```
+
+### Test Organization
+
+- `tests/test_database.py` - Database operations (14 tests)
+- `tests/test_services.py` - Service classes (17 tests)
+- `tests/test_integration.py` - End-to-end workflows (12 tests)
+
+### Continuous Integration
+
+Tests run automatically via GitHub Actions on:
+- Every push to `main` or `feature/*` branches
+- Every pull request to `main`
+- Test matrix: Python 3.9, 3.10, 3.11, 3.12
+
+**See [TESTING.md](TESTING.md) for detailed testing documentation.**
+
+---
+
 ## Features
 
 - **Web Dashboard**: Real-time monitoring interface showing current status, statistics, and upcoming meetings
@@ -16,7 +85,7 @@ Automatically monitors and records Calgary City Council webcasts when they go li
 - **Meeting Association**: Links recordings to specific council meetings
 - **Statistics**: Track recording history, duration, and file sizes
 - **Docker Ready**: Persistent storage for database and recordings
-- Runs continuously to catch all Council Chamber meetings
+- **Comprehensive Tests**: 43 tests ensuring reliability
 
 ## Requirements
 
@@ -25,9 +94,9 @@ Automatically monitors and records Calgary City Council webcasts when they go li
 - Docker Compose
 
 ### Native
-- Python 3.10+
+- Python 3.9+
 - ffmpeg
-- pip packages: requests, beautifulsoup4, python-dateutil, yt-dlp
+- pip packages (see requirements.txt)
 
 ## Installation & Usage
 
@@ -84,26 +153,17 @@ http://localhost:5000
 
 ## Configuration
 
-### Polling Intervals
-The app uses dynamic polling based on meeting schedules:
+All configuration is centralized in `config.py`. Key settings:
 
+### Polling Intervals
 ```python
 ACTIVE_CHECK_INTERVAL = 30    # 30 seconds during meeting windows
 IDLE_CHECK_INTERVAL = 1800    # 30 minutes outside meeting windows
 ```
 
-Meeting windows are defined as 5 minutes before to 6 hours after scheduled meeting time.
-
-### Scheduled Tasks
-The application includes a built-in scheduler that runs in a background thread:
-
-- **Midnight Calendar Refresh**: Automatically refreshes the meeting calendar at 00:00 (midnight) Calgary time every day
-- This ensures the database always has the latest meeting schedule
-- No cron daemon required - pure Python scheduling
+Meeting windows: 5 minutes before to 6 hours after scheduled meeting time.
 
 ### Storage Locations
-Recordings and database are stored separately:
-
 ```python
 OUTPUT_DIR = "./recordings"   # Video files
 DB_DIR = "./data"            # SQLite database and cache
@@ -117,29 +177,34 @@ volumes:
 ```
 
 ### Stream URLs
-The app monitors the Calgary Council Chamber stream. The primary stream URL is:
-```
-https://lin12.isilive.ca/live/calgarycc/live/chunklist.m3u8
-```
+The app monitors the Calgary Council Chamber stream. If the stream URL changes, update `STREAM_URL_PATTERNS` in `config.py`.
 
-If the stream URL changes, update the `STREAM_URL_PATTERNS` list in `main.py`:
+### Environment Variables
+Override defaults using environment variables:
+- `OUTPUT_DIR` - Recording output directory
+- `DB_DIR` - Database directory
+- `WEB_HOST` - Web server host (default: 0.0.0.0)
+- `WEB_PORT` - Web server port (default: 5000)
 
-```python
-STREAM_URL_PATTERNS = [
-    "https://lin12.isilive.ca/live/calgarycc/live/chunklist.m3u8",
-    "https://lin12.isilive.ca/live/calgarycc/live/playlist.m3u8",
-    # Add additional fallback URLs here
-]
+## Architecture
+
+The codebase is organized for maintainability and testability:
+
 ```
-
-## Output Format
-
-Recordings are saved as MP4 files with timestamps:
+├── config.py           # Configuration management
+├── services.py         # Business logic services
+│   ├── CalendarService      # API interactions
+│   ├── MeetingScheduler     # Meeting window logic
+│   ├── StreamService        # Stream detection
+│   └── RecordingService     # Recording management
+├── database.py         # Database operations
+├── main.py            # Application entry point
+├── web_server.py      # Flask dashboard
+└── tests/             # Comprehensive test suite
+    ├── test_database.py
+    ├── test_services.py
+    └── test_integration.py
 ```
-council_meeting_YYYYMMDD_HHMMSS.mp4
-```
-
-Example: `council_meeting_20260127_143022.mp4`
 
 ## How It Works
 
@@ -172,6 +237,15 @@ Query the database directly:
 sqlite3 ./data/council_feeds.db "SELECT * FROM recordings ORDER BY start_time DESC LIMIT 10"
 ```
 
+## Output Format
+
+Recordings are saved as MP4 files with timestamps:
+```
+council_meeting_YYYYMMDD_HHMMSS.mp4
+```
+
+Example: `council_meeting_20260127_143022.mp4`
+
 ## Troubleshooting
 
 ### Stream not detected
@@ -179,7 +253,7 @@ If you see "No stream URL found" in the logs:
 1. Open https://www.calgary.ca/council/council-and-committee-webcasts.html
 2. Open browser Developer Tools (F12) → Network tab
 3. Look for `.m3u8` files
-4. Update the `STREAM_URL_PATTERNS` in `main.py` with the correct URL
+4. Update the `STREAM_URL_PATTERNS` in `config.py` with the correct URL
 
 ### Recording stops immediately
 The stream URL may have changed. Follow the troubleshooting steps above.
@@ -190,6 +264,18 @@ Ensure the `./recordings` directory has proper permissions:
 chmod 755 ./recordings
 ```
 
+### Tests failing
+```bash
+# Ensure you have all dependencies
+pip install -r requirements.txt
+
+# Check Python version (3.9+ required)
+python --version
+
+# Run tests with verbose output
+python -m pytest tests/ -v --tb=short
+```
+
 ## Data Sources
 
 - **Meeting Calendar**: [Calgary Open Data - Council Calendar](https://data.calgary.ca/Government/Council-Calendar/23m4-i42g)
@@ -197,38 +283,15 @@ chmod 755 ./recordings
 - **Stream Player**: https://video.isilive.ca/play/calgarycc/live
 - **Stream Provider**: ISILive
 
-## Testing
+## Contributing
 
-The project includes a comprehensive test suite with 43 tests covering all core functionality.
+1. Create a feature branch
+2. Make your changes
+3. **Run tests**: `python -m pytest tests/ -v`
+4. Ensure all tests pass
+5. Submit a pull request
 
-### Run Tests
-
-```bash
-# Install test dependencies
-pip install -r requirements.txt
-
-# Run all tests
-python -m pytest tests/ -v
-
-# Run with coverage
-python -m pytest tests/ --cov=. --cov-report=html
-
-# Run only unit tests
-python -m pytest tests/ -m unit
-
-# Run only integration tests
-python -m pytest tests/ -m integration
-```
-
-See [TESTING.md](TESTING.md) for detailed testing documentation.
-
-### Continuous Integration
-
-Tests run automatically on every push and pull request via GitHub Actions:
-- Python 3.9, 3.10, 3.11, 3.12
-- Unit and integration tests
-- Code coverage reporting
-- Linting checks (optional)
+The CI pipeline will automatically run tests on your PR.
 
 ## Portability
 
