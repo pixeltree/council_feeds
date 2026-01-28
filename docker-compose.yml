@@ -7,6 +7,9 @@ services:
     volumes:
       - ./recordings:/app/recordings
       - ./data:/app/data
+      - ./transcription_service.py:/app/transcription_service.py
+      - ./database.py:/app/database.py
+      - ./web_server.py:/app/web_server.py
     ports:
       - "5001:5000"
     restart: unless-stopped

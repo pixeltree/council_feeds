@@ -1,27 +1,25 @@
 FROM python:3.11-slim
 
-# Install ffmpeg and ffprobe
+# Install system dependencies in a single layer
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Copy requirements first (changes least frequently)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --timeout=1000 --retries=5 -r requirements.txt && \
-    pip install --no-cache-dir yt-dlp
 
-# Copy application code
-COPY main.py .
-COPY database.py .
-COPY web_server.py .
-COPY services.py .
-COPY config.py .
-COPY post_processor.py .
-COPY transcription_service.py .
+# Install Python dependencies with pip cache mount for faster rebuilds
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --timeout=1000 --retries=5 -r requirements.txt && \
+    pip install yt-dlp
+
+# Copy application code (changes most frequently)
+COPY *.py ./
 COPY templates/ ./templates/
 
 # Create recordings directory
