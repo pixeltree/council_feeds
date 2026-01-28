@@ -183,6 +183,38 @@ def api_stop_recording():
         }), 500
 
 
+@app.route('/api/refresh-agenda', methods=['POST'])
+def api_refresh_agenda():
+    """API endpoint to manually refresh the meeting agenda."""
+    global recording_service
+
+    if recording_service is None:
+        return jsonify({
+            'success': False,
+            'error': 'Recording service not available'
+        }), 500
+
+    try:
+        # Refresh the calendar
+        if hasattr(recording_service, 'calendar_service'):
+            meetings = recording_service.calendar_service.get_upcoming_meetings(force_refresh=True)
+            return jsonify({
+                'success': True,
+                'message': f'Agenda refreshed. Found {len(meetings)} upcoming meetings.',
+                'meeting_count': len(meetings)
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Calendar service not available'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to refresh agenda: {str(e)}'
+        }), 500
+
+
 @app.route('/api/recordings/<int:recording_id>/segment', methods=['POST'])
 def segment_recording(recording_id):
     """Trigger segmentation for a recording."""
