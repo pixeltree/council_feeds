@@ -584,16 +584,71 @@ class RecordingService:
             else:
                 print(f"Recording saved: {output_file}")
 
-            # Update recording status in database
-            # Both naturally ended and manually stopped recordings are marked as completed
-            # since they cannot be restarted and should be available for post-processing
-            db.update_recording(recording_id, end_time, 'completed')
-
-            # Log statistics
+            # Check if recording has any content before marking as completed
+            has_content = False
             if os.path.exists(output_file):
                 file_size = os.path.getsize(output_file)
                 duration = int((end_time - start_time).total_seconds())
                 print(f"Duration: {duration}s, Size: {file_size / (1024**2):.1f} MB")
+
+                # Check for audio content using volumedetect
+                print("Checking if recording has audio content...")
+                try:
+                    result = subprocess.run(
+                        [self.ffmpeg_command, '-i', output_file, '-af', 'volumedetect', '-f', 'null', '-'],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+
+                    mean_volume = None
+                    max_volume = None
+                    for line in result.stderr.split('\n'):
+                        if 'mean_volume:' in line:
+                            try:
+                                mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                            except:
+                                pass
+                        if 'max_volume:' in line:
+                            try:
+                                max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                            except:
+                                pass
+
+                    if mean_volume and max_volume:
+                        print(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                        # If audio is reasonably loud, it has content
+                        if mean_volume > -50 or max_volume > -30:
+                            has_content = True
+                        else:
+                            print("Recording appears to have no real audio content (levels too low)")
+                    else:
+                        print("Warning: Could not detect audio levels, assuming has content")
+                        has_content = True  # Default to keeping if check fails
+
+                except Exception as e:
+                    print(f"Warning: Audio check failed: {e}, assuming has content")
+                    has_content = True  # Default to keeping if check fails
+
+            # If no content, remove the recording
+            if not has_content:
+                print("No audio content detected - removing empty recording")
+                try:
+                    if os.path.exists(output_file):
+                        os.remove(output_file)
+                        print(f"Removed empty recording file: {output_file}")
+                except Exception as e:
+                    print(f"Warning: Could not delete file: {e}")
+
+                # Mark recording as failed in database
+                db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
+                print("Recording marked as failed (no content)")
+                return True  # Return success since we handled it properly
+
+            # Update recording status in database as completed
+            # Both naturally ended and manually stopped recordings are marked as completed
+            # since they cannot be restarted and should be available for post-processing
+            db.update_recording(recording_id, end_time, 'completed')
 
             # Post-processing (experimental)
             if ENABLE_POST_PROCESSING:

@@ -477,6 +477,8 @@ class TestRecordingService:
         service.current_process = mock_process
         assert service.is_recording() is False
 
+    @patch('os.path.exists')
+    @patch('services.subprocess.run')  # Mock audio detection
     @patch('time.sleep')
     @patch('services.subprocess.Popen')
     @patch('services.db.create_recording')
@@ -493,6 +495,8 @@ class TestRecordingService:
         mock_create_recording,
         mock_popen,
         mock_sleep,
+        mock_run,
+        mock_exists,
         temp_output_dir
     ):
         """Test stopping a recording via stop_recording()."""
@@ -501,6 +505,15 @@ class TestRecordingService:
         mock_create_recording.return_value = 1
         mock_find_meeting.return_value = None
         mock_getsize.return_value = 1024 * 1024
+        mock_exists.return_value = True  # File exists
+
+        # Mock audio detection to show it has content
+        mock_run.return_value = Mock(
+            stderr="""
+            [Parsed_volumedetect_0 @ 0x123] mean_volume: -25.5 dB
+            [Parsed_volumedetect_0 @ 0x123] max_volume: -10.2 dB
+            """
+        )
 
         recording_started = threading.Event()
         stop_requested = threading.Event()
