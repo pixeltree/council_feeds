@@ -465,7 +465,7 @@ class RecordingService:
                                 ],
                                 capture_output=True,
                                 text=True,
-                                timeout=10
+                                timeout=15  # Increased timeout for large files
                             )
 
                             # Parse mean and max volume from output
@@ -503,6 +503,8 @@ class RecordingService:
                             else:
                                 print(f"[STATIC CHECK] Could not parse audio levels")
 
+                        except subprocess.TimeoutExpired:
+                            print(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_to_check)} - file may be corrupted or very large, skipping check")
                         except Exception as e:
                             print(f"[STATIC CHECK] Audio detection failed: {e}")
 
