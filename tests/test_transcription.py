@@ -71,7 +71,7 @@ class TestTranscriptionService:
         assert pipeline == mock_pipe
         mock_pipeline.assert_called_once_with(
             "pyannote/speaker-diarization-3.1",
-            use_auth_token="test_token"
+            token="test_token"
         )
 
     def test_merge_transcription_and_diarization(self):
