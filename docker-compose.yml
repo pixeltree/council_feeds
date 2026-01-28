@@ -11,11 +11,11 @@ services:
       - ./database.py:/app/database.py
       - ./web_server.py:/app/web_server.py
     ports:
-      - "5001:5000"
+      - "5000:5000"
     restart: unless-stopped
     environment:
       - TZ=America/Edmonton
       - ENABLE_POST_PROCESSING=${ENABLE_POST_PROCESSING:-false}
-      - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-true}
+      - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-false}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}

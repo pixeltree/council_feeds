@@ -60,6 +60,7 @@ class TestTranscriptionService:
             service._load_diarization_pipeline()
 
     @patch('transcription_service.Pipeline.from_pretrained')
+    @patch.dict('os.environ', {}, clear=True)
     def test_load_diarization_pipeline_cpu(self, mock_pipeline):
         """Test lazy loading of diarization pipeline on CPU."""
         mock_pipe = Mock()
@@ -73,6 +74,8 @@ class TestTranscriptionService:
         mock_pipeline.assert_called_once_with(
             "pyannote/speaker-diarization-3.1"
         )
+        # Verify token was set in environment
+        assert os.environ.get('HF_TOKEN') == 'test_token'
 
     def test_merge_transcription_and_diarization(self):
         """Test merging transcription with diarization."""

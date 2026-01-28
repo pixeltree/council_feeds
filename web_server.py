@@ -416,6 +416,9 @@ def api_transcribe_recording(recording_id):
     if not os.path.exists(recording['file_path']):
         return jsonify({'success': False, 'error': 'Recording file not found'}), 404
 
+    # Update status to 'processing' before starting thread to prevent race condition
+    db.update_transcription_status(recording_id, 'processing')
+
     # Run transcription in background thread
     def run_transcription():
         from transcription_service import TranscriptionService
@@ -428,7 +431,6 @@ def api_transcribe_recording(recording_id):
             return
 
         try:
-            db.update_transcription_status(recording_id, 'processing')
             db.add_transcription_log(recording_id, 'Starting transcription process', 'info')
             db.add_recording_log(recording_id, 'Starting transcription process', 'info')
 
@@ -459,7 +461,7 @@ def api_transcribe_recording(recording_id):
                         db.add_transcription_log(recording_id, f"Segment {idx}: Running Whisper transcription", 'info')
 
                         transcript_path = f"{segment['file_path']}.transcript.json"
-                        result = transcription_service.transcribe_with_speakers(
+                        transcription_service.transcribe_with_speakers(
                             segment['file_path'],
                             output_path=transcript_path,
                             save_to_file=True,
@@ -491,7 +493,7 @@ def api_transcribe_recording(recording_id):
                 db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
                 db.add_transcription_log(recording_id, 'Running Whisper transcription', 'info')
 
-                result = transcription_service.transcribe_with_speakers(
+                transcription_service.transcribe_with_speakers(
                     recording['file_path'],
                     output_path=transcript_path,
                     save_to_file=True,

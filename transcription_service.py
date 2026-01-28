@@ -5,7 +5,7 @@ Uses Whisper for speech-to-text and pyannote.audio for speaker diarization.
 """
 
 import os
-import whisper
+from faster_whisper import WhisperModel
 import torch
 from pyannote.audio import Pipeline
 from typing import Dict, List, Optional
@@ -50,7 +50,13 @@ class TranscriptionService:
         """Lazy load Whisper model."""
         if self._whisper_model is None:
             print(f"[TRANSCRIPTION] Loading Whisper model '{self.whisper_model_name}'...")
-            self._whisper_model = whisper.load_model(self.whisper_model_name, device=self.device)
+            # faster-whisper uses compute_type instead of device parameter
+            compute_type = "int8" if self.device == "cpu" else "float16"
+            self._whisper_model = WhisperModel(
+                self.whisper_model_name,
+                device=self.device,
+                compute_type=compute_type
+            )
         return self._whisper_model
 
     def _load_diarization_pipeline(self):
@@ -100,11 +106,28 @@ class TranscriptionService:
             db.add_transcription_log(recording_id, f'{prefix}Starting Whisper transcription (this may take 1-2 minutes)', 'info')
             db.add_recording_log(recording_id, f'{prefix}Starting Whisper transcription', 'info')
 
-        result = model.transcribe(
+        # faster-whisper returns segments as generator, we need to convert to list
+        segments, info = model.transcribe(
             audio_path,
-            verbose=False,
             language="en"
         )
+
+        # Convert generator to list and build result dict
+        segments_list = []
+        full_text = []
+        for segment in segments:
+            segments_list.append({
+                'start': segment.start,
+                'end': segment.end,
+                'text': segment.text
+            })
+            full_text.append(segment.text)
+
+        result = {
+            'language': info.language,
+            'segments': segments_list,
+            'text': ' '.join(full_text)
+        }
 
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}Whisper transcription completed', 'info')
@@ -280,27 +303,25 @@ class TranscriptionService:
         print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
         print(f"[TRANSCRIPTION] Input file: {video_path}")
 
-        # Log progress if recording_id provided
-        if recording_id:
-            import database as db
-            prefix = f"Segment {segment_number}: " if segment_number else ""
-
         # Step 1: Transcribe with Whisper
         if recording_id:
+            import database as db
             db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
 
         transcription = self.transcribe_audio(video_path, recording_id=recording_id, segment_number=segment_number)
 
         # Step 2: Perform speaker diarization
         if recording_id:
+            import database as db
             db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
 
         diarization_segments = self.perform_diarization(video_path, recording_id=recording_id, segment_number=segment_number)
 
         # Step 3: Merge results
         if recording_id:
-            db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
+            import database as db
             prefix = f"Segment {segment_number}: " if segment_number else ""
+            db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
             db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
 
         merged_segments = self.merge_transcription_and_diarization(

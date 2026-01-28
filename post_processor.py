@@ -264,7 +264,6 @@ class PostProcessor:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
             # Parse duration from ffmpeg output
-            import re
             duration_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', result.stderr)
             if duration_match:
                 hours, minutes, seconds = duration_match.groups()
@@ -272,6 +271,8 @@ class PostProcessor:
                 print(f"[POST-PROCESS] Calculated duration: {duration}s")
                 return duration
 
+        except subprocess.TimeoutExpired:
+            print("[POST-PROCESS] Warning: Duration calculation timed out")
         except Exception as e:
             print(f"[POST-PROCESS] Warning: Could not get video duration: {e}")
 
@@ -335,6 +336,12 @@ class PostProcessor:
         try:
             subprocess.run(cmd, capture_output=True, check=True, timeout=duration * 2)
             return True
+        except subprocess.TimeoutExpired:
+            print(f"[POST-PROCESS] Error extracting segment: timeout")
+            return False
+        except subprocess.CalledProcessError as e:
+            print(f"[POST-PROCESS] Error extracting segment: {e}")
+            return False
         except Exception as e:
             print(f"[POST-PROCESS] Error extracting segment: {e}")
             return False
@@ -408,7 +415,7 @@ class PostProcessor:
                 print(f"[POST-PROCESS] {msg}")
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'info')
-            except Exception as e:
+            except OSError as e:
                 msg = f"Could not delete file: {e}"
                 print(f"[POST-PROCESS] Warning: {msg}")
                 if recording_id:
@@ -423,11 +430,12 @@ class PostProcessor:
                         'failed',
                         'No audio detected in recording'
                     )
-                    db.update_post_process_status(recording_id, 'skipped', 'No audio detected - file removed')
+                    db.update_post_process_status(recording_id, 'failed', 'No audio detected - file removed')
                     db.add_recording_log(recording_id, 'Recording marked as failed in database', 'info')
                     print(f"[POST-PROCESS] Recording marked as failed in database")
-                except Exception as e:
-                    print(f"[POST-PROCESS] Warning: Could not update database: {e}")
+                except Exception:
+                    # Best-effort status update; ignore DB errors so they don't mask processing result
+                    print(f"[POST-PROCESS] Warning: Could not update database")
 
             return {
                 "success": False,

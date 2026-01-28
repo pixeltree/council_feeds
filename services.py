@@ -485,6 +485,8 @@ class RecordingService:
 
                         except subprocess.TimeoutExpired:
                             print(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_to_check)} - file may be corrupted or very large, skipping check")
+                        except subprocess.CalledProcessError as e:
+                            print(f"[STATIC CHECK] Audio detection failed (ffmpeg error): {e}")
                         except Exception as e:
                             print(f"[STATIC CHECK] Audio detection failed: {e}")
 
@@ -499,7 +501,7 @@ class RecordingService:
                     import signal
                     try:
                         process.send_signal(signal.SIGINT)
-                    except Exception:
+                    except OSError:
                         # If SIGINT fails, use terminate
                         process.terminate()
 
@@ -526,7 +528,7 @@ class RecordingService:
                     import signal
                     try:
                         process.send_signal(signal.SIGINT)
-                    except Exception:
+                    except OSError:
                         # If SIGINT fails, use terminate
                         process.terminate()
 
