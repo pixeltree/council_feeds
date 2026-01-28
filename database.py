@@ -761,7 +761,7 @@ def get_unprocessed_recordings(limit: int = 50) -> List[Dict]:
             FROM recordings r
             LEFT JOIN meetings m ON r.meeting_id = m.id
             WHERE r.status = 'completed'
-            AND (r.post_process_status IS NULL OR r.post_process_status = 'pending')
+            AND (r.post_process_status IS NULL OR r.post_process_status IN ('pending', 'failed'))
             ORDER BY r.start_time DESC
             LIMIT ?
         """, (limit,))

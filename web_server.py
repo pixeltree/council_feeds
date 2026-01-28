@@ -274,6 +274,9 @@ def process_recording(recording_id):
     if not os.path.exists(recording['file_path']):
         return jsonify({'success': False, 'error': 'Recording file not found'}), 404
 
+    # Update status to 'processing' before starting thread to prevent race condition
+    db.update_post_process_status(recording_id, 'processing', None)
+
     # Run post-processing in background thread
     def run_processing():
         processor = PostProcessor()

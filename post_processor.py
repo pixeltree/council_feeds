@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 import re
 import database as db
+from config import CALGARY_TZ, AUDIO_DETECTION_MEAN_THRESHOLD_DB, AUDIO_DETECTION_MAX_THRESHOLD_DB
 
 
 class PostProcessor:
@@ -147,12 +148,14 @@ class PostProcessor:
                 if 'mean_volume:' in line:
                     try:
                         mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except (ValueError, IndexError):
+                        # Ignore parsing errors in ffmpeg output; leave mean_volume as None
                         pass
                 if 'max_volume:' in line:
                     try:
                         max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                    except:
+                    except (ValueError, IndexError):
+                        # Ignore parsing errors in ffmpeg output; leave max_volume as None
                         pass
 
             # If we couldn't detect audio levels or they're extremely low, no audio
@@ -168,10 +171,10 @@ class PostProcessor:
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'info')
 
-            # If audio is very quiet (below -50dB mean or -30dB max), likely no real audio
-            # Actual meetings have speech typically above -30dB mean
+            # If audio is very quiet, likely no real audio
+            # Use same thresholds as static detection for consistency
             if mean_volume and max_volume:
-                if mean_volume < -50 or max_volume < -30:
+                if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
                     msg = "Audio levels too low - appears to be silent recording"
                     print(f"[POST-PROCESS] {msg}")
                     if recording_id:
@@ -367,7 +370,8 @@ class PostProcessor:
                 try:
                     db.update_post_process_status(recording_id, 'failed', 'File not found')
                     db.add_recording_log(recording_id, msg, 'error')
-                except:
+                except Exception:
+                    # Best-effort status update; ignore DB errors
                     pass
             return {"success": False, "error": "File not found"}
 
@@ -380,7 +384,8 @@ class PostProcessor:
                 try:
                     db.update_post_process_status(recording_id, 'failed', msg)
                     db.add_recording_log(recording_id, msg, 'error')
-                except:
+                except Exception:
+                    # Best-effort status update; ignore DB errors
                     pass
             return {"success": False, "error": "Could not determine duration"}
 
@@ -414,11 +419,11 @@ class PostProcessor:
                 try:
                     db.update_recording(
                         recording_id,
-                        datetime.now(),
+                        datetime.now(CALGARY_TZ),
                         'failed',
                         'No audio detected in recording'
                     )
-                    db.update_post_process_status(recording_id, 'completed', 'No audio detected - file removed')
+                    db.update_post_process_status(recording_id, 'skipped', 'No audio detected - file removed')
                     db.add_recording_log(recording_id, 'Recording marked as failed in database', 'info')
                     print(f"[POST-PROCESS] Recording marked as failed in database")
                 except Exception as e:
@@ -445,7 +450,8 @@ class PostProcessor:
                 try:
                     db.update_post_process_status(recording_id, 'completed')
                     db.add_recording_log(recording_id, msg, 'info')
-                except:
+                except Exception:
+                    # Best-effort status update; ignore DB errors
                     pass
 
             return {
@@ -551,7 +557,8 @@ class PostProcessor:
             try:
                 db.update_post_process_status(recording_id, 'completed', 'No segments created')
                 db.add_recording_log(recording_id, 'No segments created', 'info')
-            except:
+            except Exception:
+                # Best-effort status update; ignore DB errors
                 pass
 
         print(f"\n[POST-PROCESS] ========================================")

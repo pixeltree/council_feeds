@@ -29,6 +29,8 @@ from config import (
     ENABLE_POST_PROCESSING,
     POST_PROCESS_SILENCE_THRESHOLD_DB,
     POST_PROCESS_MIN_SILENCE_DURATION,
+    AUDIO_DETECTION_MEAN_THRESHOLD_DB,
+    AUDIO_DETECTION_MAX_THRESHOLD_DB,
     ENABLE_TRANSCRIPTION,
     WHISPER_MODEL,
     HUGGINGFACE_TOKEN,
@@ -235,7 +237,8 @@ class StreamService:
                 if response.status_code == 200:
                     print(f"Found working stream pattern: {pattern_url}")
                     return pattern_url
-            except:
+            except Exception:
+                # Try next pattern if this one fails
                 pass
 
         # Try parsing the page
@@ -274,38 +277,14 @@ class StreamService:
         try:
             response = requests.head(stream_url, timeout=10, allow_redirects=True)
             return response.status_code == 200
-        except:
+        except Exception:
             # Try GET request as fallback
             try:
                 response = requests.get(stream_url, timeout=10, stream=True)
                 return response.status_code == 200
-            except:
+            except Exception:
+                # Return False if both HEAD and GET fail
                 return False
-
-    def is_stream_active(self, file_path: str, min_growth_kb: int = 50) -> bool:
-        """Check if a recording file is actively growing (not just static content).
-
-        Args:
-            file_path: Path to the recording file
-            min_growth_kb: Minimum KB growth expected per minute
-
-        Returns:
-            True if file is growing (active content), False if static
-        """
-        if not os.path.exists(file_path):
-            return False
-
-        try:
-            initial_size = os.path.getsize(file_path)
-            import time
-            time.sleep(60)  # Wait 1 minute
-            final_size = os.path.getsize(file_path)
-
-            growth_kb = (final_size - initial_size) / 1024
-            return growth_kb >= min_growth_kb
-        except:
-            return True  # Assume active if check fails
-
 
 class RecordingService:
     """Service for recording streams using ffmpeg."""
@@ -434,7 +413,6 @@ class RecordingService:
             # Monitor the process
             import time
             import glob
-            last_file_size = 0
             static_checks = 0
 
             while True:
@@ -475,20 +453,22 @@ class RecordingService:
                                 if 'mean_volume:' in line:
                                     try:
                                         mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                                    except:
+                                    except (ValueError, IndexError):
+                                        # Ignore parsing errors in ffmpeg output; leave mean_volume as None
                                         pass
                                 if 'max_volume:' in line:
                                     try:
                                         max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                                    except:
+                                    except (ValueError, IndexError):
+                                        # Ignore parsing errors in ffmpeg output; leave max_volume as None
                                         pass
 
                             print(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
 
-                            # If audio is very quiet (below -40dB mean or -20dB max), likely static placeholder
-                            # Actual meetings have speech typically above -30dB mean
+                            # If audio is very quiet, likely static placeholder
+                            # Use same thresholds as post-processing for consistency
                             if mean_volume and max_volume:
-                                if mean_volume < -40 or max_volume < -20:
+                                if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
                                     static_checks += 1
                                     print(f"Warning: Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
 
@@ -519,7 +499,7 @@ class RecordingService:
                     import signal
                     try:
                         process.send_signal(signal.SIGINT)
-                    except:
+                    except Exception:
                         # If SIGINT fails, use terminate
                         process.terminate()
 
@@ -546,7 +526,8 @@ class RecordingService:
                     import signal
                     try:
                         process.send_signal(signal.SIGINT)
-                    except:
+                    except Exception:
+                        # If SIGINT fails, use terminate
                         process.terminate()
 
                     # Wait for ffmpeg to finish writing
@@ -609,12 +590,14 @@ class RecordingService:
                         if 'mean_volume:' in line:
                             try:
                                 mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                            except:
+                            except (ValueError, IndexError):
+                                # Ignore parsing errors in ffmpeg output; leave mean_volume as None
                                 pass
                         if 'max_volume:' in line:
                             try:
                                 max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                            except:
+                            except (ValueError, IndexError):
+                                # Ignore parsing errors in ffmpeg output; leave max_volume as None
                                 pass
 
                     if mean_volume and max_volume:
@@ -767,11 +750,13 @@ class RecordingService:
                 for segment in segments:
                     try:
                         os.remove(segment)
-                    except:
+                    except OSError:
+                        # Best-effort cleanup; ignore if file cannot be removed
                         pass
                 try:
                     os.remove(concat_file)
-                except:
+                except OSError:
+                    # Best-effort cleanup; ignore if file cannot be removed
                     pass
                 return output_file
             else:

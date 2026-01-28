@@ -69,9 +69,9 @@ class TestTranscriptionService:
 
         pipeline = service._load_diarization_pipeline()
         assert pipeline == mock_pipe
+        # Token is now set via environment variable, not passed as parameter
         mock_pipeline.assert_called_once_with(
-            "pyannote/speaker-diarization-3.1",
-            token="test_token"
+            "pyannote/speaker-diarization-3.1"
         )
 
     def test_merge_transcription_and_diarization(self):
@@ -167,12 +167,16 @@ class TestTranscriptionService:
         assert text.count('[SPEAKER_00]') == 2  # Speaker changes back
         assert text.count('[SPEAKER_01]') == 1
 
+    @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
-    @patch('transcription_service.os.path.exists')
-    def test_transcribe_with_speakers_success(self, mock_exists, mock_load_dia, mock_load_whisper):
+    @patch('os.path.exists')
+    def test_transcribe_with_speakers_success(self, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
         """Test complete transcription pipeline."""
         mock_exists.return_value = True
+
+        # Mock subprocess.run for ffmpeg audio extraction
+        mock_subprocess.return_value = Mock(returncode=0)
 
         # Mock Whisper model
         mock_whisper = Mock()
@@ -197,7 +201,16 @@ class TestTranscriptionService:
         service = TranscriptionService(hf_token="test_token")
 
         # Test without saving to file
-        with patch('builtins.open', mock_open()):
+        with patch('builtins.open', mock_open()), \
+             patch('tempfile.NamedTemporaryFile') as mock_temp, \
+             patch('os.remove'):
+            # Mock the temporary file
+            mock_temp_file = Mock()
+            mock_temp_file.name = '/tmp/test.wav'
+            mock_temp.__enter__ = Mock(return_value=mock_temp_file)
+            mock_temp.__exit__ = Mock(return_value=False)
+            mock_temp.return_value = mock_temp
+
             result = service.transcribe_with_speakers(
                 '/fake/video.mp4',
                 save_to_file=False
