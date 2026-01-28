@@ -165,7 +165,10 @@ def recording_detail(recording_id):
     # Get segments
     segments = db.get_segments_by_recording(recording_id)
 
-    return render_template('recording_detail.html', recording=formatted_recording, segments=segments)
+    # Get logs in reverse chronological order
+    logs = db.get_recording_logs(recording_id, limit=200)
+
+    return render_template('recording_detail.html', recording=formatted_recording, segments=segments, logs=logs)
 
 
 @app.route('/api/status')
@@ -323,6 +326,227 @@ def download_segment_transcript(segment_id):
             return "Transcript file not found", 404
 
         return send_file(transcript_path, as_attachment=True)
+
+
+@app.route('/api/recordings/stale', methods=['GET'])
+def api_get_stale_recordings():
+    """API endpoint to get all stale recordings."""
+    stale_recordings = db.get_stale_recordings()
+
+    formatted = []
+    for rec in stale_recordings:
+        start_time = db.parse_datetime_from_db(rec['start_time']) if rec['start_time'] else None
+        formatted.append({
+            'id': rec['id'],
+            'meeting_title': rec['meeting_title'] or 'Unknown Meeting',
+            'start_time': start_time.strftime('%Y-%m-%d %H:%M') if start_time else 'Unknown',
+            'file_path': rec['file_path'],
+            'status': rec['status'],
+            'file_exists': rec['file_exists'],
+            'actual_file_size': rec['actual_file_size']
+        })
+
+    return jsonify({
+        'success': True,
+        'count': len(formatted),
+        'stale_recordings': formatted
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>', methods=['DELETE'])
+def api_delete_recording(recording_id):
+    """API endpoint to delete a recording."""
+    success = db.delete_recording(recording_id)
+
+    if success:
+        return jsonify({
+            'success': True,
+            'message': f'Recording {recording_id} deleted successfully'
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'error': 'Recording not found or could not be deleted'
+        }), 404
+
+
+@app.route('/api/recordings/stale/cleanup', methods=['POST'])
+def api_cleanup_stale_recordings():
+    """API endpoint to delete all stale recordings."""
+    stale_recordings = db.get_stale_recordings()
+
+    deleted_count = 0
+    failed_count = 0
+    deleted_ids = []
+
+    for rec in stale_recordings:
+        if db.delete_recording(rec['id']):
+            deleted_count += 1
+            deleted_ids.append(rec['id'])
+        else:
+            failed_count += 1
+
+    return jsonify({
+        'success': True,
+        'deleted_count': deleted_count,
+        'failed_count': failed_count,
+        'deleted_ids': deleted_ids,
+        'message': f'Deleted {deleted_count} stale recording(s)'
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/transcribe', methods=['POST'])
+def api_transcribe_recording(recording_id):
+    """API endpoint to trigger transcription for a recording or its segments."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    if recording['status'] != 'completed':
+        return jsonify({'success': False, 'error': 'Recording must be completed before transcription'}), 400
+
+    # Check if already transcribing
+    if recording.get('transcription_status') == 'processing':
+        return jsonify({'success': False, 'error': 'Recording is already being transcribed'}), 400
+
+    if not os.path.exists(recording['file_path']):
+        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
+
+    # Run transcription in background thread
+    def run_transcription():
+        from transcription_service import TranscriptionService
+        from config import HUGGINGFACE_TOKEN, ENABLE_TRANSCRIPTION
+
+        if not ENABLE_TRANSCRIPTION:
+            db.update_transcription_status(recording_id, 'skipped', 'Transcription disabled in config')
+            db.add_transcription_log(recording_id, 'Transcription disabled in config', 'warning')
+            db.add_recording_log(recording_id, 'Transcription disabled in config', 'warning')
+            return
+
+        try:
+            db.update_transcription_status(recording_id, 'processing')
+            db.add_transcription_log(recording_id, 'Starting transcription process', 'info')
+            db.add_recording_log(recording_id, 'Starting transcription process', 'info')
+
+            transcription_service = TranscriptionService(hf_token=HUGGINGFACE_TOKEN)
+
+            # Check if recording has segments
+            segments = db.get_segments_by_recording(recording_id)
+
+            if segments and recording['is_segmented']:
+                # Transcribe each segment
+                db.add_transcription_log(recording_id, f'Found {len(segments)} segments to transcribe', 'info')
+                db.add_recording_log(recording_id, f'Found {len(segments)} segments to transcribe', 'info')
+                db.update_transcription_progress(recording_id, {'stage': 'segments', 'total': len(segments), 'current': 0})
+
+                for idx, segment in enumerate(segments, 1):
+                    if not os.path.exists(segment['file_path']):
+                        db.add_transcription_log(recording_id, f"Segment file not found: {segment['file_path']}", 'error')
+                        db.add_recording_log(recording_id, f"Segment file not found: {segment['file_path']}", 'error')
+                        continue
+
+                    db.add_transcription_log(recording_id, f"Transcribing segment {idx}/{len(segments)}", 'info')
+                    db.add_recording_log(recording_id, f"Transcribing segment {idx}/{len(segments)}", 'info')
+                    db.update_transcription_progress(recording_id, {'stage': 'segments', 'total': len(segments), 'current': idx})
+
+                    try:
+                        # Whisper transcription
+                        db.update_transcription_progress(recording_id, {'stage': 'whisper', 'segment': idx, 'total': len(segments)})
+                        db.add_transcription_log(recording_id, f"Segment {idx}: Running Whisper transcription", 'info')
+
+                        transcript_path = f"{segment['file_path']}.transcript.json"
+                        result = transcription_service.transcribe_with_speakers(
+                            segment['file_path'],
+                            output_path=transcript_path,
+                            save_to_file=True,
+                            recording_id=recording_id,
+                            segment_number=idx
+                        )
+                        db.update_segment_transcript(segment['id'], transcript_path)
+                        db.add_transcription_log(recording_id, f"Segment {idx}: Completed successfully", 'info')
+                        db.add_recording_log(recording_id, f"Segment {idx}: Completed successfully", 'info')
+                    except Exception as seg_error:
+                        db.add_transcription_log(recording_id, f"Segment {idx} failed: {str(seg_error)}", 'error')
+                        db.add_recording_log(recording_id, f"Segment {idx} failed: {str(seg_error)}", 'error')
+
+                db.update_transcription_status(recording_id, 'completed')
+                db.add_transcription_log(recording_id, 'All segments transcribed successfully', 'info')
+                db.add_recording_log(recording_id, 'All segments transcribed successfully', 'info')
+            else:
+                # Transcribe the original recording
+                db.add_transcription_log(recording_id, 'Transcribing original recording (no segments)', 'info')
+                db.add_recording_log(recording_id, 'Transcribing original recording (no segments)', 'info')
+
+                # Whisper transcription
+                db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'loading_model'})
+                db.add_transcription_log(recording_id, 'Loading Whisper model', 'info')
+                db.add_recording_log(recording_id, 'Loading Whisper model', 'info')
+
+                transcript_path = f"{recording['file_path']}.transcript.json"
+
+                db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
+                db.add_transcription_log(recording_id, 'Running Whisper transcription', 'info')
+
+                result = transcription_service.transcribe_with_speakers(
+                    recording['file_path'],
+                    output_path=transcript_path,
+                    save_to_file=True,
+                    recording_id=recording_id
+                )
+
+                db.update_recording_transcript(recording_id, transcript_path)
+                db.update_transcription_status(recording_id, 'completed')
+                db.add_transcription_log(recording_id, 'Transcription completed successfully', 'info')
+                db.add_recording_log(recording_id, 'Transcription completed successfully', 'info')
+
+            print(f"Transcription completed for recording {recording_id}")
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Transcription failed for recording {recording_id}: {error_msg}")
+            db.update_transcription_status(recording_id, 'failed', error_msg)
+            db.add_transcription_log(recording_id, f'Transcription failed: {error_msg}', 'error')
+            db.add_recording_log(recording_id, f'Transcription failed: {error_msg}', 'error')
+
+    thread = threading.Thread(target=run_transcription, daemon=True)
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Transcription started'})
+
+
+@app.route('/api/recordings/<int:recording_id>/transcription-status', methods=['GET'])
+def api_get_transcription_status(recording_id):
+    """API endpoint to get detailed transcription status with logs."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    import json
+
+    progress = None
+    if recording.get('transcription_progress'):
+        try:
+            progress = json.loads(recording['transcription_progress'])
+        except:
+            progress = None
+
+    logs = []
+    if recording.get('transcription_logs'):
+        try:
+            logs = json.loads(recording['transcription_logs'])
+        except:
+            logs = []
+
+    return jsonify({
+        'success': True,
+        'status': recording.get('transcription_status', 'pending'),
+        'error': recording.get('transcription_error'),
+        'attempted_at': recording.get('transcription_attempted_at'),
+        'progress': progress,
+        'logs': logs
+    })
 
 
 def run_server(host=None, port=None):

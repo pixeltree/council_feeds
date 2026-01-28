@@ -202,6 +202,38 @@
             </div>
         </div>
         {% endif %}
+
+        <!-- Logs Card -->
+        {% if logs %}
+        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">📝 Processing Logs</h2>
+
+            <div class="bg-gray-900 rounded-lg p-4 overflow-auto max-h-96">
+                <div class="font-mono text-sm space-y-1">
+                    {% for log in logs %}
+                    <div class="flex gap-3 {% if log.level == 'error' %}text-red-400
+                                           {% elif log.level == 'warning' %}text-yellow-400
+                                           {% else %}text-gray-300{% endif %}">
+                        <span class="text-gray-500 shrink-0 text-xs">
+                            {{ log.timestamp[11:19] }}
+                        </span>
+                        <span class="shrink-0 font-semibold
+                            {% if log.level == 'error' %}text-red-500
+                            {% elif log.level == 'warning' %}text-yellow-500
+                            {% else %}text-blue-400{% endif %}">
+                            [{{ log.level.upper() }}]
+                        </span>
+                        <span class="break-words">{{ log.message }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div class="mt-3 text-gray-500 text-xs text-right">
+                Showing {{ logs|length }} most recent log entries (newest first)
+            </div>
+        </div>
+        {% endif %}
     </div>
 </body>
 </html>

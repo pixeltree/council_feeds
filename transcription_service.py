@@ -40,6 +40,7 @@ class TranscriptionService:
             self.device = device
 
         print(f"[TRANSCRIPTION] Using device: {self.device}")
+        self._last_recording_id = None  # Track last recording ID for logging
 
         # Lazy load models (only when needed)
         self._whisper_model = None
@@ -63,9 +64,11 @@ class TranscriptionService:
                 )
 
             print("[TRANSCRIPTION] Loading speaker diarization pipeline...")
+            # Set HF_TOKEN environment variable - newer huggingface_hub reads this automatically
+            # This avoids parameter name conflicts between pyannote and huggingface_hub versions
+            os.environ['HF_TOKEN'] = self.hf_token
             self._diarization_pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=self.hf_token
+                "pyannote/speaker-diarization-3.1"
             )
 
             # Move to appropriate device
@@ -74,41 +77,101 @@ class TranscriptionService:
 
         return self._diarization_pipeline
 
-    def transcribe_audio(self, audio_path: str) -> Dict:
+    def transcribe_audio(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> Dict:
         """
         Transcribe audio file using Whisper.
 
         Args:
             audio_path: Path to audio/video file
+            recording_id: Optional recording ID for progress logging
+            segment_number: Optional segment number for logging
 
         Returns:
             Dictionary with transcription results including segments
         """
         model = self._load_whisper_model()
 
-        print(f"[TRANSCRIPTION] Transcribing audio: {audio_path}")
+        msg = f"Transcribing audio: {audio_path}"
+        print(f"[TRANSCRIPTION] {msg}")
+
+        if recording_id:
+            import database as db
+            prefix = f"Segment {segment_number}: " if segment_number else ""
+            db.add_transcription_log(recording_id, f'{prefix}Starting Whisper transcription (this may take 1-2 minutes)', 'info')
+            db.add_recording_log(recording_id, f'{prefix}Starting Whisper transcription', 'info')
+
         result = model.transcribe(
             audio_path,
             verbose=False,
             language="en"
         )
 
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}Whisper transcription completed', 'info')
+            db.add_recording_log(recording_id, f'{prefix}Whisper transcription completed', 'info')
+
         return result
 
-    def perform_diarization(self, audio_path: str) -> List[Dict]:
+    def perform_diarization(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> List[Dict]:
         """
         Perform speaker diarization on audio file.
 
         Args:
             audio_path: Path to audio/video file
+            recording_id: Optional recording ID for progress logging
+            segment_number: Optional segment number for logging
 
         Returns:
             List of speaker segments with start time, end time, and speaker label
         """
+        import subprocess
+        import tempfile
+
         pipeline = self._load_diarization_pipeline()
 
-        print(f"[TRANSCRIPTION] Performing speaker diarization: {audio_path}")
-        diarization = pipeline(audio_path)
+        msg = f"Performing speaker diarization: {audio_path}"
+        print(f"[TRANSCRIPTION] {msg}")
+
+        if recording_id:
+            import database as db
+            prefix = f"Segment {segment_number}: " if segment_number else ""
+            db.add_transcription_log(recording_id, f'{prefix}Starting speaker diarization (this may take 5-10 minutes on CPU)', 'info')
+            db.add_recording_log(recording_id, f'{prefix}Starting speaker diarization', 'info')
+
+        # pyannote requires WAV format - extract audio if needed
+        if not audio_path.endswith('.wav'):
+            print(f"[TRANSCRIPTION] Extracting audio to WAV format for diarization...")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}Converting audio to WAV format', 'info')
+
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
+                temp_wav_path = temp_wav.name
+
+            # Use ffmpeg to extract audio to WAV
+            subprocess.run([
+                'ffmpeg', '-i', audio_path,
+                '-vn',  # No video
+                '-acodec', 'pcm_s16le',  # 16-bit PCM
+                '-ar', '16000',  # 16kHz sample rate
+                '-ac', '1',  # Mono
+                '-y',  # Overwrite
+                temp_wav_path
+            ], check=True, capture_output=True)
+
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}Audio converted, running diarization model', 'info')
+
+            try:
+                diarization = pipeline(temp_wav_path)
+            finally:
+                # Clean up temp file
+                os.remove(temp_wav_path)
+        else:
+            diarization = pipeline(audio_path)
+
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
+            db.add_recording_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
 
         # Convert to list of segments
         segments = []
@@ -193,7 +256,9 @@ class TranscriptionService:
         self,
         video_path: str,
         output_path: Optional[str] = None,
-        save_to_file: bool = True
+        save_to_file: bool = True,
+        recording_id: Optional[int] = None,
+        segment_number: Optional[int] = None
     ) -> Dict:
         """
         Complete transcription pipeline with speaker diarization.
@@ -215,16 +280,35 @@ class TranscriptionService:
         print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
         print(f"[TRANSCRIPTION] Input file: {video_path}")
 
+        # Log progress if recording_id provided
+        if recording_id:
+            import database as db
+            prefix = f"Segment {segment_number}: " if segment_number else ""
+
         # Step 1: Transcribe with Whisper
-        transcription = self.transcribe_audio(video_path)
+        if recording_id:
+            db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
+
+        transcription = self.transcribe_audio(video_path, recording_id=recording_id, segment_number=segment_number)
 
         # Step 2: Perform speaker diarization
-        diarization_segments = self.perform_diarization(video_path)
+        if recording_id:
+            db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
+
+        diarization_segments = self.perform_diarization(video_path, recording_id=recording_id, segment_number=segment_number)
 
         # Step 3: Merge results
+        if recording_id:
+            db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
+            prefix = f"Segment {segment_number}: " if segment_number else ""
+            db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
+
         merged_segments = self.merge_transcription_and_diarization(
             transcription, diarization_segments
         )
+
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}Merge completed', 'info')
 
         # Prepare final output
         result = {
@@ -240,9 +324,16 @@ class TranscriptionService:
             if output_path is None:
                 output_path = video_path + '.transcript.json'
 
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}Saving transcript to file', 'info')
+
             self.save_transcript(result, output_path)
 
         print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+            db.add_recording_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
 
         return result
 
