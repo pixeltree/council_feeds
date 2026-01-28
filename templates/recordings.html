@@ -70,18 +70,61 @@
                                     {% if recording.post_process_error %}title="Error: {{ recording.post_process_error }}"{% endif %}>
                                     {% if pp_status == 'completed' %}
                                         <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                                        <span>Post-processed</span>
+                                        <span>Segmented</span>
                                     {% elif pp_status == 'processing' %}
                                         <span class="loading"></span>
-                                        <span>Processing...</span>
+                                        <span>Segmenting...</span>
                                     {% elif pp_status == 'failed' %}
                                         <span>⚠️</span>
-                                        <span>Post-process failed</span>
+                                        <span>Segment failed</span>
                                     {% else %}
                                         <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                                        <span>Not processed</span>
+                                        <span>Not segmented</span>
                                     {% endif %}
                                 </span>
+
+                                <!-- Transcription status badge -->
+                                {% set trans_status = recording.transcription_status or 'pending' %}
+                                <span class="px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1
+                                    {% if trans_status == 'completed' %}bg-green-100 text-green-700
+                                    {% elif trans_status == 'processing' %}bg-yellow-100 text-yellow-700
+                                    {% elif trans_status == 'failed' %}bg-red-100 text-red-700
+                                    {% else %}bg-gray-100 text-gray-600{% endif %}"
+                                    {% if recording.transcription_error %}title="Error: {{ recording.transcription_error }}"{% endif %}
+                                    id="trans-status-{{ recording.id }}">
+                                    {% if trans_status == 'completed' %}
+                                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
+                                        <span>Transcribed</span>
+                                    {% elif trans_status == 'processing' %}
+                                        <span class="loading"></span>
+                                        <span class="trans-status-text">Transcribing...</span>
+                                    {% elif trans_status == 'failed' %}
+                                        <span>⚠️</span>
+                                        <span>Transcript failed</span>
+                                    {% else %}
+                                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                                        <span>Not transcribed</span>
+                                    {% endif %}
+                                </span>
+
+                                <!-- Transcription progress/logs toggle for processing recordings -->
+                                {% if trans_status == 'processing' %}
+                                    <button onclick="toggleTranscriptionLogs({{ recording.id }})"
+                                            class="text-xs text-blue-600 hover:text-blue-800 underline"
+                                            id="logs-toggle-{{ recording.id }}">
+                                        Show logs
+                                    </button>
+                                {% endif %}
+                            {% endif %}
+
+                            <!-- Transcription logs section (hidden by default) -->
+                            {% if trans_status == 'processing' or trans_status == 'failed' %}
+                                <div id="trans-logs-{{ recording.id }}" class="hidden w-full mt-3 bg-gray-50 border border-gray-200 rounded px-4 py-3">
+                                    <div class="text-xs font-semibold text-gray-700 mb-2">Transcription Logs:</div>
+                                    <div id="trans-logs-content-{{ recording.id }}" class="text-xs space-y-1 max-h-48 overflow-y-auto font-mono">
+                                        <div class="text-gray-500">Loading...</div>
+                                    </div>
+                                </div>
                             {% endif %}
 
                             <!-- Show error message for failed post-processing -->
@@ -107,12 +150,34 @@
                                             onclick="processRecording({{ recording.id }})"
                                             id="process-btn-{{ recording.id }}">
                                         {% if pp_status == 'failed' %}
-                                            🔄 Retry Processing
+                                            🔄 Retry Segmenting
                                         {% else %}
-                                            ▶️ Start Processing
+                                            ▶️ Segment
                                         {% endif %}
                                     </button>
                                 {% endif %}
+
+                                {% set trans_status = recording.transcription_status or 'pending' %}
+                                {% if trans_status == 'pending' or trans_status == 'failed' %}
+                                    <button class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition font-semibold text-sm"
+                                            onclick="transcribeRecording({{ recording.id }})"
+                                            id="transcribe-btn-{{ recording.id }}">
+                                        {% if trans_status == 'failed' %}
+                                            🔄 Retry Transcribe
+                                        {% else %}
+                                            📝 Transcribe
+                                        {% endif %}
+                                    </button>
+                                {% endif %}
+                            {% endif %}
+
+                            {% if recording.status == 'recording' or (recording.status == 'completed' and not recording.duration_minutes) %}
+                                <button class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition font-semibold text-sm"
+                                        onclick="deleteRecording({{ recording.id }})"
+                                        id="delete-btn-{{ recording.id }}"
+                                        title="Delete stale recording">
+                                    🗑️ Delete
+                                </button>
                             {% endif %}
                         </div>
                     </div>
@@ -215,6 +280,159 @@
                 btn.disabled = false;
                 btn.classList.remove('opacity-75', 'cursor-not-allowed');
                 btn.innerHTML = '▶️ Start Processing';
+                alert('Error: ' + error.message);
+            });
+        }
+
+        function toggleTranscriptionLogs(recordingId) {
+            const logsDiv = document.getElementById('trans-logs-' + recordingId);
+            const toggleBtn = document.getElementById('logs-toggle-' + recordingId);
+
+            if (logsDiv.classList.contains('hidden')) {
+                logsDiv.classList.remove('hidden');
+                toggleBtn.textContent = 'Hide logs';
+                fetchTranscriptionStatus(recordingId);
+            } else {
+                logsDiv.classList.add('hidden');
+                toggleBtn.textContent = 'Show logs';
+            }
+        }
+
+        function fetchTranscriptionStatus(recordingId) {
+            fetch('/api/recordings/' + recordingId + '/transcription-status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        const logsContent = document.getElementById('trans-logs-content-' + recordingId);
+                        const statusBadge = document.getElementById('trans-status-' + recordingId);
+
+                        // Update status badge text
+                        if (data.progress && data.progress.stage) {
+                            const statusText = statusBadge.querySelector('.trans-status-text');
+                            if (statusText) {
+                                if (data.progress.stage === 'whisper') {
+                                    statusText.textContent = 'Whisper transcribing...';
+                                } else if (data.progress.stage === 'diarization') {
+                                    statusText.textContent = 'Speaker diarization...';
+                                } else if (data.progress.stage === 'merging') {
+                                    statusText.textContent = 'Merging results...';
+                                } else if (data.progress.stage === 'segments') {
+                                    statusText.textContent = `Segment ${data.progress.current}/${data.progress.total}`;
+                                }
+                            }
+                        }
+
+                        // Display logs
+                        if (data.logs && data.logs.length > 0) {
+                            logsContent.innerHTML = data.logs.map(log => {
+                                const time = new Date(log.timestamp).toLocaleTimeString();
+                                const levelColor = log.level === 'error' ? 'text-red-600' :
+                                                   log.level === 'warning' ? 'text-yellow-600' :
+                                                   'text-gray-700';
+                                return `<div class="${levelColor}"><span class="text-gray-500">[${time}]</span> ${log.message}</div>`;
+                            }).join('');
+                        } else {
+                            logsContent.innerHTML = '<div class="text-gray-500">No logs available</div>';
+                        }
+
+                        // Auto-refresh if still processing
+                        if (data.status === 'processing') {
+                            setTimeout(() => {
+                                if (!document.getElementById('trans-logs-' + recordingId).classList.contains('hidden')) {
+                                    fetchTranscriptionStatus(recordingId);
+                                }
+                            }, 3000); // Refresh every 3 seconds
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching transcription status:', error);
+                });
+        }
+
+        function transcribeRecording(recordingId) {
+            const btn = document.getElementById('transcribe-btn-' + recordingId);
+            if (!btn) return;
+
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Transcribing...';
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+
+            fetch('/api/recordings/' + recordingId + '/transcribe', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    btn.innerHTML = '✓ Transcription Started';
+                    btn.classList.remove('bg-purple-600', 'hover:bg-purple-700');
+                    btn.classList.add('bg-gray-400');
+
+                    // Reload page after 2 seconds
+                    setTimeout(() => {
+                        location.reload();
+                    }, 2000);
+                } else {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                    btn.innerHTML = '📝 Transcribe';
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                btn.innerHTML = '📝 Transcribe';
+                alert('Error: ' + error.message);
+            });
+        }
+
+        function deleteRecording(recordingId) {
+            if (!confirm('Are you sure you want to delete this recording? This action cannot be undone.')) {
+                return;
+            }
+
+            const btn = document.getElementById('delete-btn-' + recordingId);
+            if (!btn) return;
+
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Deleting...';
+            btn.classList.add('opacity-75', 'cursor-not-allowed');
+
+            fetch('/api/recordings/' + recordingId, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Remove the recording card from the page
+                    const card = document.getElementById('recording-' + recordingId);
+                    if (card) {
+                        card.style.transition = 'opacity 0.3s';
+                        card.style.opacity = '0';
+                        setTimeout(() => {
+                            card.remove();
+                        }, 300);
+                    }
+                } else {
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                    btn.innerHTML = '🗑️ Delete';
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(error => {
+                btn.disabled = false;
+                btn.classList.remove('opacity-75', 'cursor-not-allowed');
+                btn.innerHTML = '🗑️ Delete';
                 alert('Error: ' + error.message);
             });
         }
