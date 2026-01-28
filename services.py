@@ -585,8 +585,9 @@ class RecordingService:
                 print(f"Recording saved: {output_file}")
 
             # Update recording status in database
-            status = 'completed' if not self.stop_requested else 'stopped'
-            db.update_recording(recording_id, end_time, status)
+            # Both naturally ended and manually stopped recordings are marked as completed
+            # since they cannot be restarted and should be available for post-processing
+            db.update_recording(recording_id, end_time, 'completed')
 
             # Log statistics
             if os.path.exists(output_file):

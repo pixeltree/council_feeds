@@ -545,4 +545,5 @@ class TestRecordingService:
 
         mock_process.send_signal.assert_called()
         call_args = mock_update_recording.call_args
-        assert call_args[0][2] == 'stopped'
+        # Manually stopped recordings are now marked as 'completed' since they can't be restarted
+        assert call_args[0][2] == 'completed'
