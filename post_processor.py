@@ -100,6 +100,70 @@ class PostProcessor:
             print(f"[POST-PROCESS] Error detecting silent periods: {e}")
             return []
 
+    def has_audio(self, video_path: str) -> bool:
+        """
+        Check if the recording has any actual audio content (not just silence).
+
+        Returns:
+            True if audio is detected, False if entire file is silent/no audio
+        """
+        print(f"[POST-PROCESS] Checking for audio content in entire file...")
+
+        cmd = [
+            self.ffmpeg_command,
+            '-i', video_path,
+            '-af', 'volumedetect',
+            '-f', 'null',
+            '-'
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout for analysis
+            )
+
+            # Parse audio volume from output
+            mean_volume = None
+            max_volume = None
+
+            for line in result.stderr.split('\n'):
+                if 'mean_volume:' in line:
+                    try:
+                        mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                    except:
+                        pass
+                if 'max_volume:' in line:
+                    try:
+                        max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                    except:
+                        pass
+
+            # If we couldn't detect audio levels or they're extremely low, no audio
+            if mean_volume is None and max_volume is None:
+                print(f"[POST-PROCESS] No audio stream detected")
+                return False
+
+            print(f"[POST-PROCESS] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+
+            # If audio is very quiet (below -50dB mean or -30dB max), likely no real audio
+            # Actual meetings have speech typically above -30dB mean
+            if mean_volume and max_volume:
+                if mean_volume < -50 or max_volume < -30:
+                    print(f"[POST-PROCESS] Audio levels too low - appears to be silent recording")
+                    return False
+
+            return True
+
+        except subprocess.TimeoutExpired:
+            print(f"[POST-PROCESS] Warning: Audio detection timed out")
+            return True  # Assume has audio if check fails
+        except Exception as e:
+            print(f"[POST-PROCESS] Error detecting audio: {e}")
+            return True  # Assume has audio if check fails
+
     def get_video_duration(self, video_path: str) -> float:
         """Get total duration of video in seconds."""
         cmd = [
@@ -196,17 +260,66 @@ class PostProcessor:
         print(f"[POST-PROCESS] Input: {recording_path}")
         print(f"[POST-PROCESS] ========================================\n")
 
+        # Mark as processing in database
+        if recording_id:
+            try:
+                db.update_post_process_status(recording_id, 'processing')
+            except Exception as e:
+                print(f"[POST-PROCESS] Warning: Could not update status: {e}")
+
         if not os.path.exists(recording_path):
             print(f"[POST-PROCESS] Error: File not found: {recording_path}")
+            if recording_id:
+                try:
+                    db.update_post_process_status(recording_id, 'failed', 'File not found')
+                except:
+                    pass
             return {"success": False, "error": "File not found"}
 
         # Get video duration
         duration = self.get_video_duration(recording_path)
         if duration == 0:
             print(f"[POST-PROCESS] Error: Could not determine video duration")
+            if recording_id:
+                try:
+                    db.update_post_process_status(recording_id, 'failed', 'Could not determine duration')
+                except:
+                    pass
             return {"success": False, "error": "Could not determine duration"}
 
         print(f"[POST-PROCESS] Total duration: {duration:.1f}s ({duration/60:.1f} minutes)")
+
+        # Check if recording has any audio
+        if not self.has_audio(recording_path):
+            print(f"[POST-PROCESS] No audio detected in entire recording - removing file")
+
+            # Delete the recording file
+            try:
+                os.remove(recording_path)
+                print(f"[POST-PROCESS] Deleted recording file: {recording_path}")
+            except Exception as e:
+                print(f"[POST-PROCESS] Warning: Could not delete file: {e}")
+
+            # Mark recording as failed in database if recording_id provided
+            if recording_id:
+                try:
+                    db.update_recording(
+                        recording_id,
+                        datetime.now(),
+                        'failed',
+                        'No audio detected in recording'
+                    )
+                    db.update_post_process_status(recording_id, 'completed', 'No audio detected - file removed')
+                    print(f"[POST-PROCESS] Recording marked as failed in database")
+                except Exception as e:
+                    print(f"[POST-PROCESS] Warning: Could not update database: {e}")
+
+            return {
+                "success": False,
+                "error": "No audio detected",
+                "deleted": True,
+                "message": "Recording had no audio and was removed"
+            }
 
         # Detect silent periods (breaks)
         silent_periods = self.detect_silent_periods(recording_path)
@@ -216,6 +329,11 @@ class PostProcessor:
 
         if not segments:
             print(f"[POST-PROCESS] No segmentation needed")
+            if recording_id:
+                try:
+                    db.update_post_process_status(recording_id, 'completed')
+                except:
+                    pass
             return {
                 "success": True,
                 "segments_created": 0,
@@ -281,13 +399,20 @@ class PostProcessor:
             else:
                 print(f"[POST-PROCESS] ✗ Failed to create segment {i}")
 
-        # Mark recording as segmented in database
+        # Mark recording as segmented and post-processed in database
         if recording_id and len(segment_files) > 0:
             try:
                 db.mark_recording_segmented(recording_id)
+                db.update_post_process_status(recording_id, 'completed')
                 print(f"[POST-PROCESS] Recording marked as segmented in database")
             except Exception as e:
                 print(f"[POST-PROCESS] Warning: Could not mark recording as segmented: {e}")
+        elif recording_id:
+            # Post-processing attempted but no segments created
+            try:
+                db.update_post_process_status(recording_id, 'completed', 'No segments created')
+            except:
+                pass
 
         print(f"\n[POST-PROCESS] ========================================")
         print(f"[POST-PROCESS] Processing complete")

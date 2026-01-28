@@ -36,7 +36,7 @@ class TestCalendarIntegration:
         )
 
         mock_get_metadata.return_value = None
-        mock_save_meetings.return_value = 2
+        mock_save_meetings.return_value = 3  # Now returns all meetings (2 council + 1 committee)
         mock_get_meetings.return_value = []
 
         # Execute
@@ -45,7 +45,7 @@ class TestCalendarIntegration:
 
         # Verify
         mock_save_meetings.assert_called_once()
-        assert len(mock_save_meetings.call_args[0][0]) == 2
+        assert len(mock_save_meetings.call_args[0][0]) == 3  # 2 council + 1 committee
 
 
 @pytest.mark.integration

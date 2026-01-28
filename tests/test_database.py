@@ -3,7 +3,7 @@
 import pytest
 import os
 from datetime import datetime, timedelta
-from config import CALGARY_TZ
+from config import CALGARY_TZ, COUNCIL_CHAMBER, ENGINEERING_TRADITIONS_ROOM
 import database as db
 
 
@@ -328,3 +328,149 @@ class TestDatabaseFunctions:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM stream_status_log")
             assert cursor.fetchone()[0] == 1
+
+
+@pytest.mark.unit
+class TestDatabaseRoomSupport:
+    """Test database functions for room support."""
+
+    def test_save_meetings_with_room(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test saving meetings with room information."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create meetings with room information
+        meetings = [
+            {
+                'title': 'Council meeting - Regular',
+                'datetime': CALGARY_TZ.localize(datetime(2026, 2, 1, 9, 30)),
+                'raw_date': 'February 1, 2026, 9:30 a.m.',
+                'link': 'https://example.com',
+                'room': COUNCIL_CHAMBER
+            },
+            {
+                'title': 'Executive Committee',
+                'datetime': CALGARY_TZ.localize(datetime(2026, 2, 2, 9, 30)),
+                'raw_date': 'February 2, 2026, 9:30 a.m.',
+                'link': 'https://example.com',
+                'room': ENGINEERING_TRADITIONS_ROOM
+            }
+        ]
+
+        count = db.save_meetings(meetings)
+        assert count == 2
+
+        # Verify rooms are saved correctly
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT title, room FROM meetings ORDER BY meeting_datetime")
+            rows = cursor.fetchall()
+
+            assert rows[0]['title'] == 'Council meeting - Regular'
+            assert rows[0]['room'] == COUNCIL_CHAMBER
+
+            assert rows[1]['title'] == 'Executive Committee'
+            assert rows[1]['room'] == ENGINEERING_TRADITIONS_ROOM
+
+    def test_get_upcoming_meetings_includes_room(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test that get_upcoming_meetings returns room information."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        meeting = {
+            'title': 'Test Committee',
+            'datetime': CALGARY_TZ.localize(datetime(2026, 2, 1, 9, 30)),
+            'raw_date': 'February 1, 2026, 9:30 a.m.',
+            'link': 'https://example.com',
+            'room': ENGINEERING_TRADITIONS_ROOM
+        }
+
+        db.save_meetings([meeting])
+        meetings = db.get_upcoming_meetings()
+
+        assert len(meetings) == 1
+        assert 'room' in meetings[0]
+        assert meetings[0]['room'] == ENGINEERING_TRADITIONS_ROOM
+
+    def test_find_meeting_by_datetime_includes_room(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test that find_meeting_by_datetime returns room information."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        meeting_dt = CALGARY_TZ.localize(datetime(2026, 2, 1, 9, 30))
+        meeting = {
+            'title': 'Council meeting - Regular',
+            'datetime': meeting_dt,
+            'raw_date': 'February 1, 2026, 9:30 a.m.',
+            'link': 'https://example.com',
+            'room': COUNCIL_CHAMBER
+        }
+
+        db.save_meetings([meeting])
+        found = db.find_meeting_by_datetime(meeting_dt)
+
+        assert found is not None
+        assert 'room' in found
+        assert found['room'] == COUNCIL_CHAMBER
+
+    def test_room_column_migration(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test that room column is added to existing database."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        # Create database without room column (simulate old database)
+        db.ensure_db_directory()
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE meetings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    meeting_datetime TEXT NOT NULL,
+                    raw_date TEXT NOT NULL,
+                    link TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+        # Now run init_database which should add room column
+        db.init_database()
+
+        # Verify room column exists
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(meetings)")
+            columns = {row[1] for row in cursor.fetchall()}
+
+            assert 'room' in columns
+
+    def test_save_meetings_without_room_field(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test saving meetings without room field (backward compatibility)."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create meeting without room field
+        meeting = {
+            'title': 'Test Meeting',
+            'datetime': CALGARY_TZ.localize(datetime(2026, 2, 1, 9, 30)),
+            'raw_date': 'February 1, 2026, 9:30 a.m.',
+            'link': 'https://example.com'
+        }
+
+        # Should not raise an error
+        count = db.save_meetings([meeting])
+        assert count == 1
+
+        # Verify meeting was saved with empty/None room
+        meetings = db.get_upcoming_meetings()
+        assert len(meetings) == 1
+        assert meetings[0]['room'] == '' or meetings[0]['room'] is None

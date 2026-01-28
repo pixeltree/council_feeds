@@ -57,6 +57,31 @@
                                 {{ recording.status.upper() }}
                             </span>
 
+                            <!-- Post-processing status badge -->
+                            {% if recording.status == 'completed' %}
+                                {% set pp_status = recording.post_process_status or 'pending' %}
+                                <span class="px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1
+                                    {% if pp_status == 'completed' %}bg-blue-100 text-blue-700
+                                    {% elif pp_status == 'processing' %}bg-yellow-100 text-yellow-700
+                                    {% elif pp_status == 'failed' %}bg-red-100 text-red-700
+                                    {% else %}bg-gray-100 text-gray-600{% endif %}"
+                                    {% if recording.post_process_error %}title="Error: {{ recording.post_process_error }}"{% endif %}>
+                                    {% if pp_status == 'completed' %}
+                                        <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                                        <span>Post-processed</span>
+                                    {% elif pp_status == 'processing' %}
+                                        <span class="loading"></span>
+                                        <span>Processing...</span>
+                                    {% elif pp_status == 'failed' %}
+                                        <span>⚠️</span>
+                                        <span>Post-process failed</span>
+                                    {% else %}
+                                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                                        <span>Not processed</span>
+                                    {% endif %}
+                                </span>
+                            {% endif %}
+
                             {% if recording.has_transcript %}
                                 <a href="/download/transcript/{{ recording.id }}"
                                    class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm"
@@ -65,12 +90,19 @@
                                 </a>
                             {% endif %}
 
-                            {% if not recording.is_segmented and recording.status == 'completed' %}
-                                <button class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold text-sm"
-                                        onclick="segmentRecording({{ recording.id }})"
-                                        id="segment-btn-{{ recording.id }}">
-                                    ✂️ Create Segments
-                                </button>
+                            {% if recording.status == 'completed' %}
+                                {% set pp_status = recording.post_process_status or 'pending' %}
+                                {% if pp_status == 'pending' or pp_status == 'failed' %}
+                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold text-sm"
+                                            onclick="processRecording({{ recording.id }})"
+                                            id="process-btn-{{ recording.id }}">
+                                        {% if pp_status == 'failed' %}
+                                            🔄 Retry Processing
+                                        {% else %}
+                                            ▶️ Start Processing
+                                        {% endif %}
+                                    </button>
+                                {% endif %}
                             {% endif %}
                         </div>
                     </div>
@@ -136,8 +168,8 @@
     </div>
 
     <script>
-        function segmentRecording(recordingId) {
-            const btn = document.getElementById('segment-btn-' + recordingId);
+        function processRecording(recordingId) {
+            const btn = document.getElementById('process-btn-' + recordingId);
             if (!btn) return;
 
             // Disable button and show loading
@@ -145,7 +177,7 @@
             btn.innerHTML = '<span class="loading"></span> Processing...';
             btn.classList.add('opacity-75', 'cursor-not-allowed');
 
-            fetch('/api/recordings/' + recordingId + '/segment', {
+            fetch('/api/recordings/' + recordingId + '/process', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -154,25 +186,25 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    btn.innerHTML = '✓ Segmentation Started';
+                    btn.innerHTML = '✓ Processing Started';
                     btn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
                     btn.classList.add('bg-gray-400');
 
-                    // Reload page after 3 seconds
+                    // Reload page after 2 seconds
                     setTimeout(() => {
                         location.reload();
-                    }, 3000);
+                    }, 2000);
                 } else {
                     btn.disabled = false;
                     btn.classList.remove('opacity-75', 'cursor-not-allowed');
-                    btn.innerHTML = '✂️ Create Segments';
+                    btn.innerHTML = '▶️ Start Processing';
                     alert('Error: ' + (data.error || 'Unknown error'));
                 }
             })
             .catch(error => {
                 btn.disabled = false;
                 btn.classList.remove('opacity-75', 'cursor-not-allowed');
-                btn.innerHTML = '✂️ Create Segments';
+                btn.innerHTML = '▶️ Start Processing';
                 alert('Error: ' + error.message);
             });
         }

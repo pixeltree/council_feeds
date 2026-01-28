@@ -4,7 +4,7 @@ import pytest
 import responses
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock
-from config import CALGARY_TZ
+from config import CALGARY_TZ, COUNCIL_CHAMBER, ENGINEERING_TRADITIONS_ROOM, STREAM_URLS_BY_ROOM
 from services import (
     CalendarService,
     MeetingScheduler,
@@ -23,9 +23,27 @@ class TestCalendarService:
         assert service.api_url is not None
         assert service.timezone == CALGARY_TZ
 
+    def test_determine_room_council_meeting(self):
+        """Test room determination for council meetings."""
+        service = CalendarService()
+
+        assert service.determine_room('Council meeting - Regular') == COUNCIL_CHAMBER
+        assert service.determine_room('Council meeting - Public hearing') == COUNCIL_CHAMBER
+        assert service.determine_room('Council meeting - Strategic') == COUNCIL_CHAMBER
+        assert service.determine_room('COUNCIL MEETING - REGULAR') == COUNCIL_CHAMBER
+
+    def test_determine_room_committee_meeting(self):
+        """Test room determination for committee meetings."""
+        service = CalendarService()
+
+        assert service.determine_room('Executive Committee') == ENGINEERING_TRADITIONS_ROOM
+        assert service.determine_room('Community Development Committee') == ENGINEERING_TRADITIONS_ROOM
+        assert service.determine_room('Calgary Planning Commission') == ENGINEERING_TRADITIONS_ROOM
+        assert service.determine_room('Intergovernmental Affairs Committee') == ENGINEERING_TRADITIONS_ROOM
+
     @responses.activate
     def test_fetch_council_meetings_success(self, api_response_data):
-        """Test fetching council meetings successfully."""
+        """Test fetching all meetings successfully with room assignments."""
         responses.add(
             responses.GET,
             'https://data.calgary.ca/resource/23m4-i42g.json',
@@ -36,11 +54,21 @@ class TestCalendarService:
         service = CalendarService()
         meetings = service.fetch_council_meetings()
 
-        # Should filter out non-Council meetings
-        assert len(meetings) == 2
-        assert all('Council meeting' in m['title'] for m in meetings)
+        # Should return all meetings (both council and committee)
+        assert len(meetings) == 3  # 2 council + 1 committee from fixture
         assert all('datetime' in m for m in meetings)
         assert all(m['datetime'].tzinfo is not None for m in meetings)
+        assert all('room' in m for m in meetings)
+
+        # Check that council meetings have correct room
+        council_meetings = [m for m in meetings if 'Council meeting' in m['title']]
+        assert len(council_meetings) == 2
+        assert all(m['room'] == COUNCIL_CHAMBER for m in council_meetings)
+
+        # Check that committee meetings have correct room
+        committee_meetings = [m for m in meetings if 'Council meeting' not in m['title']]
+        assert len(committee_meetings) == 1
+        assert all(m['room'] == ENGINEERING_TRADITIONS_ROOM for m in committee_meetings)
 
     @responses.activate
     def test_fetch_council_meetings_api_error(self):
@@ -282,6 +310,59 @@ class TestStreamService:
         is_live = service.is_stream_live('')
 
         assert is_live is False
+
+    @responses.activate
+    def test_get_stream_url_with_council_chamber_room(self):
+        """Test getting stream URL for Council Chamber."""
+        # Mock Council Chamber stream URL
+        council_url = STREAM_URLS_BY_ROOM[COUNCIL_CHAMBER][0]
+        responses.add(responses.HEAD, council_url, status=200)
+
+        service = StreamService()
+        url = service.get_stream_url(room=COUNCIL_CHAMBER)
+
+        assert url == council_url
+
+    @responses.activate
+    def test_get_stream_url_with_engineering_traditions_room(self):
+        """Test getting stream URL for Engineering Traditions Room."""
+        # Mock Engineering Traditions Room stream URL
+        et_url = STREAM_URLS_BY_ROOM[ENGINEERING_TRADITIONS_ROOM][0]
+        responses.add(responses.HEAD, et_url, status=200)
+
+        service = StreamService()
+        url = service.get_stream_url(room=ENGINEERING_TRADITIONS_ROOM)
+
+        assert url == et_url
+
+    @responses.activate
+    def test_get_stream_url_with_unknown_room(self):
+        """Test getting stream URL with unknown room falls back to pattern matching."""
+        # Mock first legacy pattern URL
+        responses.add(
+            responses.HEAD,
+            'https://temp2.isilive.ca/live/calgary/legislative/chunklist.m3u8',
+            status=200
+        )
+
+        service = StreamService()
+        url = service.get_stream_url(room="Unknown Room")
+
+        # Should fall back to trying all patterns
+        assert url == 'https://temp2.isilive.ca/live/calgary/legislative/chunklist.m3u8'
+
+    @responses.activate
+    def test_get_stream_url_room_specific_tries_room_urls_first(self):
+        """Test that room-specific requests try room URLs before falling back."""
+        # Make Engineering Traditions Room URL fail
+        for et_url in STREAM_URLS_BY_ROOM[ENGINEERING_TRADITIONS_ROOM]:
+            responses.add(responses.HEAD, et_url, status=404)
+
+        service = StreamService()
+        url = service.get_stream_url(room=ENGINEERING_TRADITIONS_ROOM)
+
+        # Should return None since room-specific URLs all failed
+        assert url is None
 
 
 @pytest.mark.unit

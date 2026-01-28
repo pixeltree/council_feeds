@@ -6,6 +6,7 @@ flask==3.0.0
 schedule==1.2.0
 
 # Transcription dependencies
+numpy<2.0
 openai-whisper==20231117
 pyannote.audio==3.1.1
 torch==2.2.0

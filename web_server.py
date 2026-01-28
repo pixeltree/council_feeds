@@ -65,7 +65,9 @@ def format_recordings(recordings):
             'duration_minutes': round(rec['duration_seconds'] / 60) if rec['duration_seconds'] else None,
             'file_size_bytes': rec['file_size_bytes'],
             'file_size_mb': round(rec['file_size_bytes'] / (1024**2), 1) if rec['file_size_bytes'] else None,
-            'status': rec['status']
+            'status': rec['status'],
+            'post_process_status': rec.get('post_process_status'),
+            'post_process_error': rec.get('post_process_error')
         })
 
     return formatted
@@ -124,6 +126,8 @@ def recordings_list():
             'has_transcript': bool(rec['transcript_path']),
             'transcript_path': rec['transcript_path'],
             'file_path': rec['file_path'],
+            'post_process_status': rec.get('post_process_status'),
+            'post_process_error': rec.get('post_process_error'),
             'segments': segments
         })
 
@@ -215,30 +219,41 @@ def api_refresh_agenda():
         }), 500
 
 
-@app.route('/api/recordings/<int:recording_id>/segment', methods=['POST'])
-def segment_recording(recording_id):
-    """Trigger segmentation for a recording."""
+@app.route('/api/recordings/<int:recording_id>/process', methods=['POST'])
+def process_recording(recording_id):
+    """Trigger post-processing for a recording."""
     recording = db.get_recording_by_id(recording_id)
 
     if not recording:
         return jsonify({'success': False, 'error': 'Recording not found'}), 404
 
-    if recording['is_segmented']:
-        return jsonify({'success': False, 'error': 'Recording already segmented'}), 400
+    if recording['status'] != 'completed':
+        return jsonify({'success': False, 'error': 'Recording must be completed before processing'}), 400
+
+    # Check if already processing
+    if recording.get('post_process_status') == 'processing':
+        return jsonify({'success': False, 'error': 'Recording is already being processed'}), 400
 
     if not os.path.exists(recording['file_path']):
         return jsonify({'success': False, 'error': 'Recording file not found'}), 404
 
-    # Run segmentation in background thread
-    def run_segmentation():
+    # Run post-processing in background thread
+    def run_processing():
         processor = PostProcessor()
         result = processor.process_recording(recording['file_path'], recording_id)
-        print(f"Segmentation result for recording {recording_id}: {result}")
+        print(f"Post-processing result for recording {recording_id}: {result}")
 
-    thread = threading.Thread(target=run_segmentation, daemon=True)
+    thread = threading.Thread(target=run_processing, daemon=True)
     thread.start()
 
-    return jsonify({'success': True, 'message': 'Segmentation started'})
+    return jsonify({'success': True, 'message': 'Post-processing started'})
+
+
+@app.route('/api/recordings/<int:recording_id>/segment', methods=['POST'])
+def segment_recording(recording_id):
+    """Trigger segmentation for a recording (legacy endpoint - use /process instead)."""
+    # Redirect to the new process endpoint
+    return process_recording(recording_id)
 
 
 @app.route('/download/transcript/<int:recording_id>')

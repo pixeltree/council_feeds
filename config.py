@@ -31,8 +31,28 @@ from datetime import timedelta
 MEETING_BUFFER_BEFORE = timedelta(minutes=5)
 MEETING_BUFFER_AFTER = timedelta(hours=6)
 
-# Stream URL patterns to try
+# Room definitions
+COUNCIL_CHAMBER = "Council Chamber"
+ENGINEERING_TRADITIONS_ROOM = "Engineering Traditions Room"
+
+# Stream URL patterns by room
+STREAM_URLS_BY_ROOM = {
+    COUNCIL_CHAMBER: [
+        "https://lin12.isilive.ca/live/calgarycc/live/chunklist.m3u8",
+        "https://lin12.isilive.ca/live/calgarycc/live/playlist.m3u8",
+        "https://video.isilive.ca/live/calgarycc/live/playlist.m3u8",
+        "https://video.isilive.ca/live/_definst_/calgarycc/live/playlist.m3u8",
+    ],
+    ENGINEERING_TRADITIONS_ROOM: [
+        "https://temp2.isilive.ca/live/calgary/legislative/chunklist.m3u8",
+        "https://temp2.isilive.ca/live/calgary/legislative/index.m3u8",
+    ]
+}
+
+# Legacy stream URL patterns (for backward compatibility)
 STREAM_URL_PATTERNS = [
+    "https://temp2.isilive.ca/live/calgary/legislative/chunklist.m3u8",
+    "https://temp2.isilive.ca/live/calgary/legislative/index.m3u8",
     "https://lin12.isilive.ca/live/calgarycc/live/chunklist.m3u8",
     "https://lin12.isilive.ca/live/calgarycc/live/playlist.m3u8",
     "https://video.isilive.ca/live/calgarycc/live/playlist.m3u8",
@@ -62,3 +82,10 @@ RECORDING_FORMAT = os.getenv("RECORDING_FORMAT", "mkv")  # mkv (safest), mp4, or
 ENABLE_SEGMENTED_RECORDING = os.getenv("ENABLE_SEGMENTED_RECORDING", "true").lower() == "true"
 SEGMENT_DURATION = int(os.getenv("SEGMENT_DURATION", "900"))  # 15 minutes in seconds
 RECORDING_RECONNECT = os.getenv("RECORDING_RECONNECT", "true").lower() == "true"  # Auto-reconnect on stream issues
+
+# Static stream detection settings (prevents recording placeholder/static images)
+ENABLE_STATIC_DETECTION = os.getenv("ENABLE_STATIC_DETECTION", "true").lower() == "true"
+STATIC_MIN_GROWTH_KB = int(os.getenv("STATIC_MIN_GROWTH_KB", "10"))  # Minimum KB growth per check
+STATIC_CHECK_INTERVAL = int(os.getenv("STATIC_CHECK_INTERVAL", "30"))  # Seconds between checks
+STATIC_MAX_FAILURES = int(os.getenv("STATIC_MAX_FAILURES", "3"))  # Consecutive failures before stopping
+STATIC_SCENE_THRESHOLD = int(os.getenv("STATIC_SCENE_THRESHOLD", "200"))  # Minimum scene changes for active content

@@ -98,9 +98,10 @@ def main():
     meetings = calendar_service.get_upcoming_meetings()
 
     if meetings:
-        print("\nUpcoming Council Chamber meetings:")
+        print("\nUpcoming meetings:")
         for i, meeting in enumerate(meetings[:5], 1):  # Show first 5
-            print(f"  {i}. {meeting['title']}")
+            room = meeting.get('room', 'Unknown')
+            print(f"  {i}. {meeting['title']} [{room}]")
             print(f"     {meeting['raw_date']}")
         if len(meetings) > 5:
             print(f"  ... and {len(meetings) - 5} more")
@@ -146,13 +147,15 @@ def main():
                 print(f"{'='*70}\n")
                 active_mode = False
 
-            # Check for stream
-            stream_url = stream_service.get_stream_url()
+            # Check for stream - pass room info if available
+            meeting_room = current_meeting.get('room') if current_meeting else None
+            stream_url = stream_service.get_stream_url(room=meeting_room)
 
             if stream_url:
                 if stream_service.is_stream_live(stream_url):
                     mode_label = "🔴 ACTIVE" if active_mode else "IDLE"
-                    print(f"[{current_time.strftime('%H:%M:%S')}] [{mode_label}] Stream is LIVE! Starting recording...")
+                    room_label = f" ({meeting_room})" if meeting_room else ""
+                    print(f"[{current_time.strftime('%H:%M:%S')}] [{mode_label}] Stream is LIVE{room_label}! Starting recording...")
                     recording_service.record_stream(stream_url, current_meeting)
                     print(f"[{current_time.strftime('%H:%M:%S')}] Recording completed. Resuming monitoring...")
                 else:
@@ -160,7 +163,8 @@ def main():
                         print(f"[{current_time.strftime('%H:%M:%S')}] [🔴 ACTIVE] Stream found but not live yet...")
             else:
                 if active_mode:  # Only log during active mode
-                    print(f"[{current_time.strftime('%H:%M:%S')}] [🔴 ACTIVE] No stream URL found...")
+                    room_label = f" ({meeting_room})" if meeting_room else ""
+                    print(f"[{current_time.strftime('%H:%M:%S')}] [🔴 ACTIVE] No stream URL found{room_label}...")
 
             # Dynamic sleep interval
             check_interval = ACTIVE_CHECK_INTERVAL if active_mode else IDLE_CHECK_INTERVAL

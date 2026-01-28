@@ -21,6 +21,7 @@ COPY web_server.py .
 COPY services.py .
 COPY config.py .
 COPY post_processor.py .
+COPY transcription_service.py .
 COPY templates/ ./templates/
 
 # Create recordings directory

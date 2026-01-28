@@ -8,11 +8,11 @@ services:
       - ./recordings:/app/recordings
       - ./data:/app/data
     ports:
-      - "5000:5000"
+      - "5001:5000"
     restart: unless-stopped
     environment:
       - TZ=America/Edmonton
       - ENABLE_POST_PROCESSING=${ENABLE_POST_PROCESSING:-false}
-      - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-false}
+      - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-true}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}

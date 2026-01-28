@@ -95,6 +95,7 @@ def init_database():
                 meeting_datetime TEXT NOT NULL,
                 raw_date TEXT NOT NULL,
                 link TEXT,
+                room TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(meeting_datetime, title)
@@ -187,6 +188,22 @@ def init_database():
             ON segments(recording_id)
         """)
 
+        # Migration: Add room column to meetings table if it doesn't exist
+        cursor.execute("PRAGMA table_info(meetings)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'room' not in columns:
+            cursor.execute("ALTER TABLE meetings ADD COLUMN room TEXT")
+
+        # Migration: Add post-processing tracking columns to recordings table
+        cursor.execute("PRAGMA table_info(recordings)")
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'post_process_status' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN post_process_status TEXT DEFAULT 'pending'")  # 'pending', 'processing', 'completed', 'failed', 'skipped'
+        if 'post_process_attempted_at' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN post_process_attempted_at TEXT")
+        if 'post_process_error' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN post_process_error TEXT")
+
 
 def save_meetings(meetings: List[Dict]) -> int:
     """
@@ -205,18 +222,20 @@ def save_meetings(meetings: List[Dict]) -> int:
                 meeting_dt = CALGARY_TZ.localize(meeting_dt)
 
             cursor.execute("""
-                INSERT INTO meetings (title, meeting_datetime, raw_date, link, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO meetings (title, meeting_datetime, raw_date, link, room, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(meeting_datetime, title)
                 DO UPDATE SET
                     raw_date = excluded.raw_date,
                     link = excluded.link,
+                    room = excluded.room,
                     updated_at = excluded.updated_at
             """, (
                 meeting['title'],
                 meeting_dt.isoformat(),
                 meeting['raw_date'],
                 meeting.get('link', ''),
+                meeting.get('room', ''),
                 now,
                 now
             ))
@@ -232,7 +251,7 @@ def get_upcoming_meetings(limit: int = 50) -> List[Dict]:
         now = datetime.now(CALGARY_TZ).isoformat()
 
         cursor.execute("""
-            SELECT id, title, meeting_datetime, raw_date, link
+            SELECT id, title, meeting_datetime, raw_date, link, room
             FROM meetings
             WHERE meeting_datetime >= ?
             ORDER BY meeting_datetime ASC
@@ -246,7 +265,8 @@ def get_upcoming_meetings(limit: int = 50) -> List[Dict]:
                 'title': row['title'],
                 'datetime': parse_datetime_from_db(row['meeting_datetime']),
                 'raw_date': row['raw_date'],
-                'link': row['link']
+                'link': row['link'],
+                'room': row['room']
             })
 
         return meetings
@@ -267,7 +287,7 @@ def find_meeting_by_datetime(meeting_datetime: datetime, tolerance_minutes: int 
         end_range = (meeting_datetime + timedelta(minutes=tolerance_minutes)).isoformat()
 
         cursor.execute("""
-            SELECT id, title, meeting_datetime, raw_date, link
+            SELECT id, title, meeting_datetime, raw_date, link, room
             FROM meetings
             WHERE meeting_datetime BETWEEN ? AND ?
             ORDER BY ABS(CAST((julianday(meeting_datetime) - julianday(?)) * 1440 AS INTEGER))
@@ -281,7 +301,8 @@ def find_meeting_by_datetime(meeting_datetime: datetime, tolerance_minutes: int 
                 'title': row['title'],
                 'datetime': parse_datetime_from_db(row['meeting_datetime']),
                 'raw_date': row['raw_date'],
-                'link': row['link']
+                'link': row['link'],
+                'room': row['room']
             }
         return None
 
@@ -462,6 +483,9 @@ def get_recent_recordings(limit: int = 10) -> List[Dict]:
                 r.status,
                 r.transcript_path,
                 r.is_segmented,
+                r.post_process_status,
+                r.post_process_attempted_at,
+                r.post_process_error,
                 m.title as meeting_title,
                 m.meeting_datetime
             FROM recordings r
@@ -482,6 +506,9 @@ def get_recent_recordings(limit: int = 10) -> List[Dict]:
                 'status': row['status'],
                 'transcript_path': row['transcript_path'],
                 'is_segmented': row['is_segmented'],
+                'post_process_status': row['post_process_status'],
+                'post_process_attempted_at': row['post_process_attempted_at'],
+                'post_process_error': row['post_process_error'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']
             })
@@ -505,6 +532,9 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 r.status,
                 r.transcript_path,
                 r.is_segmented,
+                r.post_process_status,
+                r.post_process_attempted_at,
+                r.post_process_error,
                 m.id as meeting_id,
                 m.title as meeting_title,
                 m.meeting_datetime
@@ -525,6 +555,9 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 'status': row['status'],
                 'transcript_path': row['transcript_path'],
                 'is_segmented': row['is_segmented'],
+                'post_process_status': row['post_process_status'],
+                'post_process_attempted_at': row['post_process_attempted_at'],
+                'post_process_error': row['post_process_error'],
                 'meeting_id': row['meeting_id'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']
@@ -624,6 +657,84 @@ def update_segment_transcript(segment_id: int, transcript_path: str):
             SET transcript_path = ?, has_transcript = 1
             WHERE id = ?
         """, (transcript_path, segment_id))
+
+
+def update_post_process_status(recording_id: int, status: str, error: Optional[str] = None):
+    """Update post-processing status for a recording.
+
+    Args:
+        recording_id: Recording ID
+        status: Status ('pending', 'processing', 'completed', 'failed', 'skipped')
+        error: Optional error message
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        now = datetime.now(CALGARY_TZ).isoformat()
+
+        cursor.execute("""
+            UPDATE recordings
+            SET post_process_status = ?,
+                post_process_attempted_at = ?,
+                post_process_error = ?
+            WHERE id = ?
+        """, (status, now, error, recording_id))
+
+
+def get_unprocessed_recordings(limit: int = 50) -> List[Dict]:
+    """Get completed recordings that haven't been post-processed yet.
+
+    Args:
+        limit: Maximum number of recordings to return
+
+    Returns:
+        List of recording dictionaries
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                r.id,
+                r.meeting_id,
+                r.file_path,
+                r.start_time,
+                r.end_time,
+                r.duration_seconds,
+                r.file_size_bytes,
+                r.status,
+                r.is_segmented,
+                r.post_process_status,
+                r.post_process_attempted_at,
+                r.post_process_error,
+                m.title as meeting_title
+            FROM recordings r
+            LEFT JOIN meetings m ON r.meeting_id = m.id
+            WHERE r.status = 'completed'
+            AND (r.post_process_status IS NULL OR r.post_process_status = 'pending')
+            ORDER BY r.start_time DESC
+            LIMIT ?
+        """, (limit,))
+
+        recordings = []
+        for row in cursor.fetchall():
+            recordings.append({
+                'id': row['id'],
+                'meeting_id': row['meeting_id'],
+                'file_path': row['file_path'],
+                'start_time': row['start_time'],
+                'end_time': row['end_time'],
+                'duration_seconds': row['duration_seconds'],
+                'file_size_bytes': row['file_size_bytes'],
+                'status': row['status'],
+                'is_segmented': row['is_segmented'],
+                'post_process_status': row['post_process_status'],
+                'post_process_attempted_at': row['post_process_attempted_at'],
+                'post_process_error': row['post_process_error'],
+                'meeting_title': row['meeting_title']
+            })
+
+        return recordings
 
 
 if __name__ == '__main__':

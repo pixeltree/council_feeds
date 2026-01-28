@@ -13,6 +13,18 @@
         .pulse-dot {
             animation: pulse-animation 2s ease-in-out infinite;
         }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading-mini {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border: 2px solid #e5e7eb;
+            border-top-color: #fbbf24;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
     </style>
     <script>
         // Auto-refresh every 10 seconds
@@ -183,13 +195,41 @@
                             {% endif %}
                         </div>
                     </div>
-                    <span class="px-3 py-1 rounded-full text-xs font-semibold
-                        {% if recording.status == 'completed' %}bg-green-100 text-green-700
-                        {% elif recording.status == 'failed' %}bg-red-100 text-red-700
-                        {% elif recording.status == 'stopped' %}bg-yellow-100 text-yellow-700
-                        {% else %}bg-orange-100 text-orange-700{% endif %}">
-                        {{ recording.status.upper() }}
-                    </span>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <span class="px-3 py-1 rounded-full text-xs font-semibold
+                            {% if recording.status == 'completed' %}bg-green-100 text-green-700
+                            {% elif recording.status == 'failed' %}bg-red-100 text-red-700
+                            {% elif recording.status == 'stopped' %}bg-yellow-100 text-yellow-700
+                            {% else %}bg-orange-100 text-orange-700{% endif %}">
+                            {{ recording.status.upper() }}
+                        </span>
+
+                        <!-- Post-processing indicator for completed recordings -->
+                        {% if recording.status == 'completed' %}
+                            {% set pp_status = recording.post_process_status or 'pending' %}
+                            {% if pp_status == 'completed' %}
+                                <span class="text-xs text-blue-600 inline-flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span>Processed</span>
+                                </span>
+                            {% elif pp_status == 'processing' %}
+                                <span class="text-xs text-yellow-600 inline-flex items-center gap-1">
+                                    <span class="loading-mini"></span>
+                                    <span>Processing...</span>
+                                </span>
+                            {% elif pp_status == 'failed' %}
+                                <span class="text-xs text-red-600 inline-flex items-center gap-1">
+                                    <span>⚠️</span>
+                                    <span>PP Failed</span>
+                                </span>
+                            {% else %}
+                                <span class="text-xs text-gray-500 inline-flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                                    <span>Not processed</span>
+                                </span>
+                            {% endif %}
+                        {% endif %}
+                    </div>
                 </div>
                 {% endfor %}
             {% else %}
