@@ -166,6 +166,7 @@ class PostProcessor:
 
     def get_video_duration(self, video_path: str) -> float:
         """Get total duration of video in seconds."""
+        # First try to get duration from format
         cmd = [
             self.ffprobe_command,
             '-v', 'error',
@@ -180,18 +181,66 @@ class PostProcessor:
                 print(f"[POST-PROCESS] ffprobe error: {result.stderr}")
                 return 0
             data = json.loads(result.stdout)
-            return float(data['format']['duration'])
+            if 'format' in data and 'duration' in data['format']:
+                return float(data['format']['duration'])
         except json.JSONDecodeError as e:
             print(f"[POST-PROCESS] Warning: Could not parse ffprobe output: {e}")
-            print(f"[POST-PROCESS] ffprobe stdout: {result.stdout[:200]}")
-            return 0
-        except KeyError as e:
-            print(f"[POST-PROCESS] Warning: Duration not found in ffprobe output: {e}")
-            print(f"[POST-PROCESS] ffprobe data: {data}")
-            return 0
+        except Exception as e:
+            print(f"[POST-PROCESS] Warning: Error getting format duration: {e}")
+
+        # If format duration not available, try decoding the file to get duration
+        # This works for files with incomplete metadata
+        print(f"[POST-PROCESS] Format duration not available, calculating from file...")
+        cmd = [
+            self.ffprobe_command,
+            '-v', 'error',
+            '-count_packets',
+            '-show_entries', 'stream=duration,nb_read_packets',
+            '-of', 'json',
+            video_path
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                print(f"[POST-PROCESS] ffprobe error: {result.stderr}")
+                return 0
+
+            data = json.loads(result.stdout)
+
+            # Try to get duration from streams
+            if 'streams' in data:
+                for stream in data['streams']:
+                    if stream.get('codec_type') == 'video' and 'duration' in stream:
+                        duration = float(stream['duration'])
+                        if duration > 0:
+                            print(f"[POST-PROCESS] Got duration from video stream: {duration}s")
+                            return duration
+
+            # If still no duration, use ffmpeg to decode and count frames
+            print(f"[POST-PROCESS] Calculating duration by decoding file (may take a while)...")
+            cmd = [
+                self.ffmpeg_command,
+                '-i', video_path,
+                '-f', 'null',
+                '-'
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+            # Parse duration from ffmpeg output
+            import re
+            duration_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', result.stderr)
+            if duration_match:
+                hours, minutes, seconds = duration_match.groups()
+                duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+                print(f"[POST-PROCESS] Calculated duration: {duration}s")
+                return duration
+
         except Exception as e:
             print(f"[POST-PROCESS] Warning: Could not get video duration: {e}")
-            return 0
+
+        return 0
 
     def calculate_segments(self, duration: float, silent_periods: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """
