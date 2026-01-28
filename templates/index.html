@@ -47,6 +47,32 @@
                 button.textContent = 'Stop Recording';
             }
         }
+
+        async function refreshAgenda() {
+            const button = document.getElementById('refresh-agenda-button');
+            button.disabled = true;
+            button.textContent = 'Refreshing...';
+
+            try {
+                const response = await fetch('/api/refresh-agenda', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(result.message);
+                    location.reload();
+                } else {
+                    alert('Failed to refresh agenda: ' + (result.error || 'Unknown error'));
+                    button.disabled = false;
+                    button.textContent = '🔄 Refresh Agenda';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                button.disabled = false;
+                button.textContent = '🔄 Refresh Agenda';
+            }
+        }
     </script>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -117,7 +143,12 @@
 
         <!-- Upcoming Meetings Card -->
         <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
-            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">Upcoming Meetings</h2>
+            <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
+                <h2 class="text-gray-800 text-2xl font-bold">Upcoming Meetings</h2>
+                <button id="refresh-agenda-button" onclick="refreshAgenda()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                    🔄 Refresh Agenda
+                </button>
+            </div>
             {% if meetings %}
                 <ul class="space-y-2">
                     {% for meeting in meetings %}

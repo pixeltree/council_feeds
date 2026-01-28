@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  council-recorder:
+    build:
+      context: .
+      dockerfile: Dockerfile.rpi
+    container_name: calgary-council-recorder-rpi
+    volumes:
+      # IMPORTANT: Mount external USB drive for recordings
+      # Replace /mnt/usb-drive with your actual mount point
+      - /mnt/usb-drive/recordings:/app/recordings
+      - ./data:/app/data
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+    environment:
+      - TZ=America/Edmonton
+      
+      # Recording settings optimized for Raspberry Pi
+      - RECORDING_FORMAT=mkv
+      - ENABLE_SEGMENTED_RECORDING=true
+      - SEGMENT_DURATION=900              # 15 minutes
+      - RECORDING_RECONNECT=true
+      
+      # Disable CPU-intensive features
+      - ENABLE_TRANSCRIPTION=false        # Too heavy for RPi
+      - ENABLE_POST_PROCESSING=false      # Can run manually later
+      
+      # Paths
+      - OUTPUT_DIR=/app/recordings
+      - DB_DIR=/app/data
+      
+    # Resource limits to prevent OOM on RPi
+    mem_limit: 512m
+    mem_reservation: 256m
+    
+    # Use host network for better performance (optional)
+    # network_mode: "host"
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/status"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
