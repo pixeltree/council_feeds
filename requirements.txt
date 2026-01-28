@@ -7,7 +7,7 @@ schedule==1.2.0
 
 # Transcription dependencies
 numpy<2.0
-openai-whisper==20231117
+faster-whisper==1.0.3
 pyannote.audio>=3.1.1
 huggingface-hub>=0.20.0
 torch==2.2.0
