@@ -134,6 +134,40 @@ def recordings_list():
     return render_template('recordings.html', recordings=formatted_recordings)
 
 
+@app.route('/recording/<int:recording_id>')
+def recording_detail(recording_id):
+    """Recording detail page."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    # Format recording data
+    start_time = db.parse_datetime_from_db(recording['start_time']) if recording['start_time'] else None
+    end_time = db.parse_datetime_from_db(recording['end_time']) if recording['end_time'] else None
+
+    formatted_recording = {
+        'id': recording['id'],
+        'meeting_title': recording['meeting_title'] or 'Council Meeting',
+        'start_time': start_time.strftime('%Y-%m-%d %H:%M') if start_time else 'Unknown',
+        'end_time': end_time.strftime('%Y-%m-%d %H:%M') if end_time else None,
+        'duration_minutes': round(recording['duration_seconds'] / 60) if recording['duration_seconds'] else None,
+        'file_size_mb': round(recording['file_size_bytes'] / (1024**2), 1) if recording['file_size_bytes'] else None,
+        'status': recording['status'],
+        'is_segmented': recording['is_segmented'],
+        'has_transcript': bool(recording['transcript_path']),
+        'transcript_path': recording['transcript_path'],
+        'file_path': recording['file_path'],
+        'post_process_status': recording.get('post_process_status'),
+        'post_process_error': recording.get('post_process_error')
+    }
+
+    # Get segments
+    segments = db.get_segments_by_recording(recording_id)
+
+    return render_template('recording_detail.html', recording=formatted_recording, segments=segments)
+
+
 @app.route('/api/status')
 def api_status():
     """API endpoint for status information."""

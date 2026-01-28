@@ -38,7 +38,9 @@
                     <!-- Recording Header -->
                     <div class="flex flex-col lg:flex-row justify-between items-start gap-4 mb-3">
                         <div class="flex-1">
-                            <div class="text-gray-800 text-xl font-semibold mb-1">{{ recording.meeting_title }}</div>
+                            <a href="/recording/{{ recording.id }}" class="text-gray-800 text-xl font-semibold mb-1 hover:text-indigo-600 transition">
+                                {{ recording.meeting_title }}
+                            </a>
                             <div class="text-gray-600 text-sm">
                                 {{ recording.start_time }}
                                 {% if recording.duration_minutes %}
