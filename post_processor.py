@@ -176,8 +176,19 @@ class PostProcessor:
 
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                print(f"[POST-PROCESS] ffprobe error: {result.stderr}")
+                return 0
             data = json.loads(result.stdout)
             return float(data['format']['duration'])
+        except json.JSONDecodeError as e:
+            print(f"[POST-PROCESS] Warning: Could not parse ffprobe output: {e}")
+            print(f"[POST-PROCESS] ffprobe stdout: {result.stdout[:200]}")
+            return 0
+        except KeyError as e:
+            print(f"[POST-PROCESS] Warning: Duration not found in ffprobe output: {e}")
+            print(f"[POST-PROCESS] ffprobe data: {data}")
+            return 0
         except Exception as e:
             print(f"[POST-PROCESS] Warning: Could not get video duration: {e}")
             return 0

@@ -149,7 +149,8 @@ class TestPostProcessor:
     def test_get_video_duration_success(self, mock_run):
         """Test getting video duration successfully."""
         mock_run.return_value = Mock(
-            stdout='{"format": {"duration": "14400.5"}}'
+            stdout='{"format": {"duration": "14400.5"}}',
+            returncode=0
         )
 
         processor = PostProcessor()

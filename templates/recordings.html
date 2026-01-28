@@ -84,6 +84,14 @@
                                 </span>
                             {% endif %}
 
+                            <!-- Show error message for failed post-processing -->
+                            {% if recording.post_process_status == 'failed' and recording.post_process_error %}
+                                <div class="w-full mt-2 bg-red-50 border border-red-200 rounded px-3 py-2 text-xs">
+                                    <span class="text-red-700 font-semibold">Post-processing error:</span>
+                                    <span class="text-red-600">{{ recording.post_process_error }}</span>
+                                </div>
+                            {% endif %}
+
                             {% if recording.has_transcript %}
                                 <a href="/download/transcript/{{ recording.id }}"
                                    class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm"
