@@ -871,8 +871,8 @@ def get_orphaned_files(recordings_dir: str = None) -> List[Dict]:
     # Scan recordings directory
     for root, dirs, files in os.walk(recordings_dir):
         for filename in files:
-            # Skip non-audio files and temp files
-            if not (filename.endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg')) or
+            # Skip non-audio/video files and temp files
+            if not (filename.endswith(('.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mp4', '.mkv')) or
                     filename.endswith('.txt')):  # Include transcript files
                 continue
 
