@@ -26,6 +26,7 @@ SAMPLE_HTML = """
 class TestAgendaParserGemini:
     """Test Gemini-based agenda parser functions."""
 
+    @patch("config.GEMINI_API_KEY", "test-api-key")
     @patch("agenda_parser.requests.post")
     @patch("requests.get")
     def test_extract_speakers_with_gemini_success(self, mock_get, mock_post):
@@ -155,6 +156,7 @@ class TestAgendaParserGemini:
 
         assert speakers == []
 
+    @patch("config.GEMINI_API_KEY", "test-api-key")
     @patch("agenda_parser.requests.post")
     @patch("requests.get")
     def test_extract_speakers_removes_markdown_code_blocks(self, mock_get, mock_post):
@@ -188,6 +190,7 @@ class TestAgendaParserGemini:
         assert len(speakers) == 1
         assert speakers[0]["name"] == "Test User"
 
+    @patch("config.GEMINI_API_KEY", "test-api-key")
     @patch("agenda_parser.requests.post")
     @patch("requests.get")
     def test_extract_speakers_adds_default_confidence(self, mock_get, mock_post):
