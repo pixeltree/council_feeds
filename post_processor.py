@@ -430,8 +430,8 @@ class PostProcessor:
                         'failed',
                         'No audio detected in recording'
                     )
-                    # Use consistent 'failed' status for both recording and post-processing
-                    db.update_post_process_status(recording_id, 'failed', 'No audio detected - file removed')
+                    # Use 'skipped' status since post-processing successfully determined there was no audio
+                    db.update_post_process_status(recording_id, 'skipped', 'No audio detected - file removed')
                     db.add_recording_log(recording_id, 'Recording marked as failed in database', 'info')
                     print(f"[POST-PROCESS] Recording marked as failed in database")
                 except Exception:
