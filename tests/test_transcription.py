@@ -34,23 +34,23 @@ class TestTranscriptionService:
         service = TranscriptionService(device="cpu")
         assert service.device == "cpu"
 
-    @patch('transcription_service.whisper.load_model')
-    def test_load_whisper_model(self, mock_load):
+    @patch('transcription_service.WhisperModel')
+    def test_load_whisper_model(self, mock_whisper_model):
         """Test lazy loading of Whisper model."""
         mock_model = Mock()
-        mock_load.return_value = mock_model
+        mock_whisper_model.return_value = mock_model
 
         service = TranscriptionService(whisper_model="tiny", device="cpu")
 
         # First call should load
         model = service._load_whisper_model()
         assert model == mock_model
-        mock_load.assert_called_once_with("tiny", device="cpu")
+        mock_whisper_model.assert_called_once_with("tiny", device="cpu", compute_type="int8")
 
         # Second call should return cached
         model2 = service._load_whisper_model()
         assert model2 == mock_model
-        assert mock_load.call_count == 1  # Not called again
+        assert mock_whisper_model.call_count == 1  # Not called again
 
     def test_load_diarization_pipeline_no_token(self):
         """Test diarization pipeline fails without token."""
@@ -181,15 +181,15 @@ class TestTranscriptionService:
         # Mock subprocess.run for ffmpeg audio extraction
         mock_subprocess.return_value = Mock(returncode=0)
 
-        # Mock Whisper model
+        # Mock Whisper model (faster-whisper returns segments generator and info tuple)
         mock_whisper = Mock()
-        mock_whisper.transcribe.return_value = {
-            'text': 'Full transcript text',
-            'language': 'en',
-            'segments': [
-                {'start': 0.0, 'end': 5.0, 'text': ' Hello'}
-            ]
-        }
+        mock_segment = Mock()
+        mock_segment.start = 0.0
+        mock_segment.end = 5.0
+        mock_segment.text = ' Hello'
+        mock_info = Mock()
+        mock_info.language = 'en'
+        mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
         # Mock diarization pipeline
@@ -221,7 +221,7 @@ class TestTranscriptionService:
 
         assert result['file'] == '/fake/video.mp4'
         assert result['language'] == 'en'
-        assert result['full_text'] == 'Full transcript text'
+        assert ' Hello' in result['full_text']
         assert len(result['segments']) == 1
         assert result['segments'][0]['speaker'] == 'SPEAKER_00'
         assert result['num_speakers'] == 1
