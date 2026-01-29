@@ -58,18 +58,35 @@ class TestTranscriptionService:
         with pytest.raises(ValueError, match="pyannote.ai API token required"):
             service.perform_diarization('/fake/audio.wav')
 
+    @patch('os.path.getsize')
     @patch('builtins.open', mock_open(read_data=b'fake audio data'))
+    @patch('requests.put')
     @patch('requests.post')
-    def test_perform_diarization_api_success(self, mock_post):
+    def test_perform_diarization_api_success(self, mock_post, mock_put, mock_getsize):
         """Test diarization via API."""
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            'segments': [
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
+
+        # Mock the upload URL response
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        # Mock the file upload response
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock the diarization job response (sync)
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
                 {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
             ]
         }
-        mock_post.return_value = mock_response
+
+        # Setup post to return different responses based on call
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
 
         service = TranscriptionService(pyannote_api_token="test_token", device="cpu")
 
@@ -79,7 +96,7 @@ class TestTranscriptionService:
         assert segments[0]['start'] == 0.0
         assert segments[0]['end'] == 10.0
         assert segments[0]['speaker'] == 'SPEAKER_00'
-        mock_post.assert_called_once()
+        assert mock_post.call_count == 2
 
     def test_merge_transcription_and_diarization(self):
         """Test merging transcription with diarization."""
@@ -118,12 +135,12 @@ class TestTranscriptionService:
         ]
 
         # Segment entirely within first speaker
-        speaker = service._find_speaker_for_segment(2.0, 8.0, diarization)
-        assert speaker == 'SPEAKER_00'
+        speaker_info = service._find_speaker_for_segment(2.0, 8.0, diarization)
+        assert speaker_info['speaker'] == 'SPEAKER_00'
 
         # Segment entirely within second speaker
-        speaker = service._find_speaker_for_segment(12.0, 18.0, diarization)
-        assert speaker == 'SPEAKER_01'
+        speaker_info = service._find_speaker_for_segment(12.0, 18.0, diarization)
+        assert speaker_info['speaker'] == 'SPEAKER_01'
 
     def test_find_speaker_for_segment_partial_overlap(self):
         """Test finding speaker with partial overlap (picks best)."""
@@ -135,12 +152,12 @@ class TestTranscriptionService:
         ]
 
         # Segment spanning both speakers - more overlap with first
-        speaker = service._find_speaker_for_segment(8.0, 12.0, diarization)
-        assert speaker == 'SPEAKER_00'
+        speaker_info = service._find_speaker_for_segment(8.0, 12.0, diarization)
+        assert speaker_info['speaker'] == 'SPEAKER_00'
 
         # Segment spanning both speakers - more overlap with second
-        speaker = service._find_speaker_for_segment(9.0, 15.0, diarization)
-        assert speaker == 'SPEAKER_01'
+        speaker_info = service._find_speaker_for_segment(9.0, 15.0, diarization)
+        assert speaker_info['speaker'] == 'SPEAKER_01'
 
     def test_find_speaker_for_segment_no_overlap(self):
         """Test finding speaker with no overlap returns UNKNOWN."""
@@ -151,8 +168,8 @@ class TestTranscriptionService:
         ]
 
         # Segment before any diarization
-        speaker = service._find_speaker_for_segment(0.0, 5.0, diarization)
-        assert speaker == 'UNKNOWN'
+        speaker_info = service._find_speaker_for_segment(0.0, 5.0, diarization)
+        assert speaker_info['speaker'] == 'UNKNOWN'
 
     def test_format_transcript_as_text(self):
         """Test formatting transcript as readable text."""
@@ -174,13 +191,16 @@ class TestTranscriptionService:
         assert text.count('[SPEAKER_00]') == 2  # Speaker changes back
         assert text.count('[SPEAKER_01]') == 1
 
+    @patch('requests.put')
+    @patch('os.path.getsize')
     @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('requests.post')
     @patch('os.path.exists')
-    def test_transcribe_with_speakers_success(self, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
+    def test_transcribe_with_speakers_success(self, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test complete transcription pipeline."""
         mock_exists.return_value = True
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
 
         # Mock subprocess.run for ffmpeg audio extraction
         mock_subprocess.return_value = Mock(returncode=0)
@@ -196,15 +216,24 @@ class TestTranscriptionService:
         mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
-        # Mock API response for diarization
-        mock_api_response = Mock()
-        mock_api_response.status_code = 200
-        mock_api_response.json.return_value = {
-            'segments': [
+        # Mock file upload
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock API responses for diarization
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
                 {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
             ]
         }
-        mock_load_dia.return_value = mock_api_response
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
 
         service = TranscriptionService(pyannote_api_token="test_token")
 
@@ -291,13 +320,16 @@ class TestTranscriptionService:
         call_args = mock_subprocess.call_args[0][0]
         assert '/output/audio.wav' in call_args
 
+    @patch('requests.put')
+    @patch('os.path.getsize')
     @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
-    def test_transcribe_with_speakers_extracts_audio_once(self, mock_remove, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
+    def test_transcribe_with_speakers_extracts_audio_once(self, mock_remove, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test that transcribe_with_speakers extracts audio once for both Whisper and diarization."""
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
         # Video exists, WAV doesn't exist initially, then exists for cleanup
         def exists_side_effect(path):
             if path == '/fake/video.mp4':
@@ -325,15 +357,24 @@ class TestTranscriptionService:
         mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
-        # Mock API response for diarization
-        mock_api_response = Mock()
-        mock_api_response.status_code = 200
-        mock_api_response.json.return_value = {
-            'segments': [
+        # Mock file upload
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock API responses for diarization
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
                 {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
             ]
         }
-        mock_load_dia.return_value = mock_api_response
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
 
         service = TranscriptionService(pyannote_api_token="test_token")
 
@@ -349,7 +390,7 @@ class TestTranscriptionService:
 
         # Verify both Whisper and diarization used the extracted audio
         mock_whisper.transcribe.assert_called_once()
-        mock_load_dia.assert_called_once()
+        assert mock_post.call_count == 2  # Upload URL + diarization API
 
         # Verify the same audio path was used for both
         whisper_audio_path = mock_whisper.transcribe.call_args[0][0]
@@ -362,13 +403,16 @@ class TestTranscriptionService:
         assert result['file'] == '/fake/video.mp4'
         assert result['num_speakers'] == 1
 
+    @patch('requests.put')
+    @patch('os.path.getsize')
     @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
-    def test_transcribe_with_speakers_resumes_after_failure(self, mock_remove, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
+    def test_transcribe_with_speakers_resumes_after_failure(self, mock_remove, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test that transcribe_with_speakers can resume using existing WAV after failure."""
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
         # Video exists, WAV already exists (from previous failed attempt)
         mock_exists.return_value = True
         mock_subprocess.return_value = Mock(returncode=0)
@@ -384,15 +428,24 @@ class TestTranscriptionService:
         mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
-        # Mock API response for diarization
-        mock_api_response = Mock()
-        mock_api_response.status_code = 200
-        mock_api_response.json.return_value = {
-            'segments': [
+        # Mock file upload
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock API responses for diarization
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
                 {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
             ]
         }
-        mock_load_dia.return_value = mock_api_response
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
 
         service = TranscriptionService(pyannote_api_token="test_token")
 
@@ -407,7 +460,7 @@ class TestTranscriptionService:
 
         # Verify both Whisper and diarization still worked
         mock_whisper.transcribe.assert_called_once()
-        mock_load_dia.assert_called_once()
+        assert mock_post.call_count == 2  # Upload URL + diarization API
 
         # Verify WAV file was cleaned up after successful transcription
         mock_remove.assert_called_once_with('/fake/video.wav')
@@ -416,23 +469,35 @@ class TestTranscriptionService:
         assert result['file'] == '/fake/video.mp4'
         assert result['num_speakers'] == 1
 
+    @patch('requests.put')
+    @patch('os.path.getsize')
     @patch('builtins.open', mock_open(read_data=b'fake audio data'))
     @patch('subprocess.run')
     @patch('requests.post')
     @patch('os.path.exists')
-    def test_perform_diarization_accepts_wav_directly(self, mock_exists, mock_load_dia, mock_subprocess):
+    def test_perform_diarization_accepts_wav_directly(self, mock_exists, mock_post, mock_subprocess, mock_getsize, mock_put):
         """Test that perform_diarization accepts WAV files directly without conversion."""
         mock_exists.return_value = True
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
 
-        # Mock API response for diarization
-        mock_api_response = Mock()
-        mock_api_response.status_code = 200
-        mock_api_response.json.return_value = {
-            'segments': [
+        # Mock file upload
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock API responses for diarization
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
                 {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
             ]
         }
-        mock_load_dia.return_value = mock_api_response
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
 
         service = TranscriptionService(pyannote_api_token="test_token")
         segments = service.perform_diarization('/fake/audio.wav')
@@ -441,7 +506,7 @@ class TestTranscriptionService:
         mock_subprocess.assert_not_called()
 
         # Verify diarization API was called
-        mock_load_dia.assert_called_once()
+        assert mock_post.call_count == 2
         assert len(segments) == 1
         assert segments[0]['speaker'] == 'SPEAKER_00'
 
