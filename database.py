@@ -68,6 +68,7 @@ def ensure_db_directory():
 @contextmanager
 def get_db_connection():
     """Context manager for database connections."""
+    ensure_db_directory()
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row  # Enable column access by name
     try:
