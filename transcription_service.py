@@ -135,21 +135,67 @@ class TranscriptionService:
 
         return result
 
+    def extract_audio_to_wav(self, video_path: str, output_wav_path: Optional[str] = None, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> str:
+        """
+        Extract audio from video to WAV format suitable for transcription.
+
+        Args:
+            video_path: Path to video file
+            output_wav_path: Optional output path (defaults to temp file)
+            recording_id: Optional recording ID for progress logging
+            segment_number: Optional segment number for logging
+
+        Returns:
+            Path to extracted WAV file
+        """
+        import subprocess
+        import tempfile
+
+        msg = "Extracting audio to WAV format"
+        print(f"[TRANSCRIPTION] {msg}...")
+        if recording_id:
+            import database as db
+            prefix = f"Segment {segment_number}: " if segment_number else ""
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+            db.add_recording_log(recording_id, f'{prefix}{msg}', 'info')
+
+        # Create temp file if no output path specified
+        if output_wav_path is None:
+            temp_wav = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+            output_wav_path = temp_wav.name
+            temp_wav.close()
+
+        # Use ffmpeg to extract audio to WAV
+        # pyannote requires: 16-bit PCM, 16kHz, mono
+        subprocess.run([
+            'ffmpeg', '-i', video_path,
+            '-vn',  # No video
+            '-acodec', 'pcm_s16le',  # 16-bit PCM
+            '-ar', '16000',  # 16kHz sample rate
+            '-ac', '1',  # Mono
+            '-y',  # Overwrite
+            output_wav_path
+        ], check=True, capture_output=True)
+
+        msg = f"Audio extracted to {output_wav_path}"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        return output_wav_path
+
     def perform_diarization(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> List[Dict]:
         """
         Perform speaker diarization on audio file.
 
         Args:
-            audio_path: Path to audio/video file
+            audio_path: Path to audio/video file (preferably WAV)
             recording_id: Optional recording ID for progress logging
             segment_number: Optional segment number for logging
 
         Returns:
             List of speaker segments with start time, end time, and speaker label
         """
-        import subprocess
-        import tempfile
-
         pipeline = self._load_diarization_pipeline()
 
         msg = f"Performing speaker diarization: {audio_path}"
@@ -161,36 +207,7 @@ class TranscriptionService:
             db.add_transcription_log(recording_id, f'{prefix}Starting speaker diarization (this may take 5-10 minutes on CPU)', 'info')
             db.add_recording_log(recording_id, f'{prefix}Starting speaker diarization', 'info')
 
-        # pyannote requires WAV format - extract audio if needed
-        if not audio_path.endswith('.wav'):
-            print(f"[TRANSCRIPTION] Extracting audio to WAV format for diarization...")
-            if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Converting audio to WAV format', 'info')
-
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-                temp_wav_path = temp_wav.name
-
-            # Use ffmpeg to extract audio to WAV
-            subprocess.run([
-                'ffmpeg', '-i', audio_path,
-                '-vn',  # No video
-                '-acodec', 'pcm_s16le',  # 16-bit PCM
-                '-ar', '16000',  # 16kHz sample rate
-                '-ac', '1',  # Mono
-                '-y',  # Overwrite
-                temp_wav_path
-            ], check=True, capture_output=True)
-
-            if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Audio converted, running diarization model', 'info')
-
-            try:
-                diarization = pipeline(temp_wav_path)
-            finally:
-                # Clean up temp file
-                os.remove(temp_wav_path)
-        else:
-            diarization = pipeline(audio_path)
+        diarization = pipeline(audio_path)
 
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
@@ -303,60 +320,77 @@ class TranscriptionService:
         print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
         print(f"[TRANSCRIPTION] Input file: {video_path}")
 
-        # Step 1: Transcribe with Whisper
+        # Step 0: Extract audio to WAV format once (for both Whisper and pyannote)
         if recording_id:
             import database as db
-            db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
+            db.update_transcription_progress(recording_id, {'stage': 'extraction', 'step': 'extracting'})
 
-        transcription = self.transcribe_audio(video_path, recording_id=recording_id, segment_number=segment_number)
+        audio_wav_path = self.extract_audio_to_wav(video_path, recording_id=recording_id, segment_number=segment_number)
 
-        # Step 2: Perform speaker diarization
-        if recording_id:
-            import database as db
-            db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
+        try:
+            # Step 1: Transcribe with Whisper
+            if recording_id:
+                import database as db
+                db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
 
-        diarization_segments = self.perform_diarization(video_path, recording_id=recording_id, segment_number=segment_number)
+            transcription = self.transcribe_audio(audio_wav_path, recording_id=recording_id, segment_number=segment_number)
 
-        # Step 3: Merge results
-        if recording_id:
-            import database as db
-            prefix = f"Segment {segment_number}: " if segment_number else ""
-            db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
-            db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
+            # Step 2: Perform speaker diarization
+            if recording_id:
+                import database as db
+                db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
 
-        merged_segments = self.merge_transcription_and_diarization(
-            transcription, diarization_segments
-        )
+            diarization_segments = self.perform_diarization(audio_wav_path, recording_id=recording_id, segment_number=segment_number)
 
-        if recording_id:
-            db.add_transcription_log(recording_id, f'{prefix}Merge completed', 'info')
+            # Step 3: Merge results
+            if recording_id:
+                import database as db
+                prefix = f"Segment {segment_number}: " if segment_number else ""
+                db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
+                db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
 
-        # Prepare final output
-        result = {
-            'file': video_path,
-            'language': transcription.get('language', 'en'),
-            'segments': merged_segments,
-            'full_text': transcription['text'],
-            'num_speakers': len(set(seg['speaker'] for seg in merged_segments))
-        }
-
-        # Save to file if requested
-        if save_to_file:
-            if output_path is None:
-                output_path = video_path + '.transcript.json'
+            merged_segments = self.merge_transcription_and_diarization(
+                transcription, diarization_segments
+            )
 
             if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Saving transcript to file', 'info')
+                db.add_transcription_log(recording_id, f'{prefix}Merge completed', 'info')
 
-            self.save_transcript(result, output_path)
+            # Prepare final output
+            result = {
+                'file': video_path,
+                'language': transcription.get('language', 'en'),
+                'segments': merged_segments,
+                'full_text': transcription['text'],
+                'num_speakers': len(set(seg['speaker'] for seg in merged_segments))
+            }
 
-        print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+            # Save to file if requested
+            if save_to_file:
+                if output_path is None:
+                    output_path = video_path + '.transcript.json'
 
-        if recording_id:
-            db.add_transcription_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
-            db.add_recording_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+                if recording_id:
+                    db.add_transcription_log(recording_id, f'{prefix}Saving transcript to file', 'info')
 
-        return result
+                self.save_transcript(result, output_path)
+
+            print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+                db.add_recording_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+
+            return result
+
+        finally:
+            # Clean up temporary WAV file
+            if os.path.exists(audio_wav_path):
+                try:
+                    os.remove(audio_wav_path)
+                    print(f"[TRANSCRIPTION] Cleaned up temporary audio file: {audio_wav_path}")
+                except OSError as e:
+                    print(f"[TRANSCRIPTION] Warning: Could not remove temporary audio file: {e}")
 
     def save_transcript(self, transcript: Dict, output_path: str):
         """
