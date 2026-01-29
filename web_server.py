@@ -164,11 +164,32 @@ def recording_detail(recording_id):
         'transcript_path': recording['transcript_path'],
         'file_path': recording['file_path'],
         'post_process_status': recording.get('post_process_status'),
-        'post_process_error': recording.get('post_process_error')
+        'post_process_error': recording.get('post_process_error'),
+        'diarization_pyannote_path': recording.get('diarization_pyannote_path'),
+        'diarization_gemini_path': recording.get('diarization_gemini_path')
     }
 
     # Get segments
     segments = db.get_segments_by_recording(recording_id)
+
+    # Add diarization file existence checks for each segment
+    for segment in segments:
+        if segment.get('file_path'):
+            file_path = segment['file_path']
+            segment['has_diarization_pyannote'] = os.path.exists(file_path + '.diarization.pyannote.json')
+            segment['has_diarization_gemini'] = os.path.exists(file_path + '.diarization.gemini.json')
+            # Check legacy format too
+            segment['has_diarization_legacy'] = os.path.exists(file_path + '.diarization.json')
+            segment['has_any_diarization'] = (
+                segment['has_diarization_pyannote'] or
+                segment['has_diarization_gemini'] or
+                segment['has_diarization_legacy']
+            )
+        else:
+            segment['has_diarization_pyannote'] = False
+            segment['has_diarization_gemini'] = False
+            segment['has_diarization_legacy'] = False
+            segment['has_any_diarization'] = False
 
     # Get logs in reverse chronological order
     logs = db.get_recording_logs(recording_id, limit=200)

@@ -200,16 +200,20 @@
                                    class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm whitespace-nowrap">
                                     📄 Transcript
                                 </a>
+                                {% if segment.has_diarization_pyannote %}
                                 <a href="/download/diarization/pyannote/segment/{{ segment.id }}"
                                    class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm whitespace-nowrap"
                                    title="Download original pyannote diarization">
                                     🎯 Pyannote
                                 </a>
+                                {% endif %}
+                                {% if segment.has_diarization_gemini %}
                                 <a href="/download/diarization/gemini/segment/{{ segment.id }}"
                                    class="px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-md hover:from-purple-600 hover:to-blue-600 transition font-semibold text-sm whitespace-nowrap"
                                    title="Download Gemini-refined diarization">
                                     ✨ Gemini
                                 </a>
+                                {% endif %}
                             </div>
                         {% endif %}
                     </div>

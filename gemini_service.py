@@ -41,14 +41,28 @@ def refine_diarization(
     if not expected_speakers:
         print("[GEMINI] WARNING: No expected speakers provided, will use context only")
 
-    print(f"[GEMINI] Sending diarization to Gemini (model: {model})")
-
-    # Get segment count for logging
+    # Get segment count for early size check
     segments = pyannote_json.get('segments', pyannote_json.get('diarization', []))
     num_segments = len(segments)
     num_speakers = len(expected_speakers)
 
+    # Skip refinement for very large meetings (>1000 segments) before attempting API call
+    if num_segments > 1000:
+        print(f"[GEMINI] Skipping refinement for meeting with {num_segments} segments (too large)")
+        return pyannote_json
+
+    print(f"[GEMINI] Sending diarization to Gemini (model: {model})")
     print(f"[GEMINI] Processing {num_segments} diarization segments with {num_speakers} expected speakers")
+
+    # Check prompt size for warning about large meetings
+    # Estimate token count (rough: 1 token ≈ 4 characters)
+    prompt_estimate = len(json.dumps(pyannote_json)) / 4
+    MAX_REASONABLE_TOKENS = 30000  # Leave headroom for Gemini's context limit (usually 32k-128k)
+
+    if prompt_estimate > MAX_REASONABLE_TOKENS:
+        print(f"[GEMINI] WARNING: Diarization is very large (~{int(prompt_estimate)} tokens)")
+        print(f"[GEMINI] Large meetings may hit API limits or incur high costs")
+        print(f"[GEMINI] Consider chunking strategy for meetings with >{num_segments} segments")
 
     try:
         # Import google-generativeai here to avoid import errors if not installed
@@ -63,10 +77,16 @@ def refine_diarization(
         # Construct the prompt
         prompt = _construct_prompt(pyannote_json, expected_speakers, meeting_title)
 
-        # Call the API
+        # Call the API with timeout
+        # Note: google-generativeai doesn't support direct timeout parameter in generate_content
+        # We use request_options to set timeout at the HTTP level
+        import google.generativeai.types as genai_types
+
+        request_options = genai_types.RequestOptions(timeout=timeout)
         response = model_instance.generate_content(
             prompt,
-            generation_config={'temperature': 0.1}  # Low temperature for consistency
+            generation_config={'temperature': 0.1},  # Low temperature for consistency
+            request_options=request_options
         )
 
         # Extract JSON from response
@@ -86,8 +106,9 @@ def refine_diarization(
         original_labels = _count_unique_speakers(pyannote_json)
         refined_labels = _count_unique_speakers(refined_json)
         generic_count = sum(1 for label in refined_labels if label.startswith('SPEAKER_'))
+        refined_count = len(refined_labels) - generic_count
 
-        print(f"[GEMINI] Refined {len(refined_labels) - generic_count} speaker labels, kept {generic_count} generic")
+        print(f"[GEMINI] Original: {len(original_labels)} speakers, Refined: {refined_count} named, {generic_count} generic")
 
         return refined_json
 
