@@ -36,7 +36,7 @@ class TestCalendarIntegration:
         )
 
         mock_get_metadata.return_value = None
-        mock_save_meetings.return_value = 2
+        mock_save_meetings.return_value = 3  # Now returns all meetings (2 council + 1 committee)
         mock_get_meetings.return_value = []
 
         # Execute
@@ -45,7 +45,7 @@ class TestCalendarIntegration:
 
         # Verify
         mock_save_meetings.assert_called_once()
-        assert len(mock_save_meetings.call_args[0][0]) == 2
+        assert len(mock_save_meetings.call_args[0][0]) == 3  # 2 council + 1 committee
 
 
 @pytest.mark.integration
@@ -257,6 +257,8 @@ class TestTranscriptionIntegration:
     @patch('services.db.update_recording_transcript')
     @patch('transcription_service.TranscriptionService')
     @patch('services.subprocess.Popen')
+    @patch('os.path.exists')
+    @patch('services.subprocess.run')  # Mock audio detection
     @patch('services.db.create_recording')
     @patch('services.db.update_recording')
     @patch('services.db.log_stream_status')
@@ -269,6 +271,8 @@ class TestTranscriptionIntegration:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
+        mock_run,
+        mock_exists,
         mock_popen,
         mock_transcription_service_class,
         mock_update_transcript,
@@ -278,6 +282,15 @@ class TestTranscriptionIntegration:
         # Setup recording mocks
         mock_create_recording.return_value = 1
         mock_getsize.return_value = 1024 * 1024
+        mock_exists.return_value = True
+
+        # Mock audio detection to show it has content
+        mock_run.return_value = Mock(
+            stderr="""
+            [Parsed_volumedetect_0 @ 0x123] mean_volume: -25.5 dB
+            [Parsed_volumedetect_0 @ 0x123] max_volume: -10.2 dB
+            """
+        )
 
         mock_process = MagicMock()
         mock_process.pid = 12345
@@ -378,6 +391,8 @@ class TestPostProcessingIntegration:
     """Integration tests for post-processing with recording service."""
 
     @patch('services.ENABLE_POST_PROCESSING', True)
+    @patch('os.path.exists')
+    @patch('services.subprocess.run')  # Mock audio detection
     @patch('post_processor.PostProcessor')
     @patch('services.subprocess.Popen')
     @patch('services.db.create_recording')
@@ -394,9 +409,22 @@ class TestPostProcessingIntegration:
         mock_create_recording,
         mock_popen,
         mock_post_processor_class,
+        mock_run,
+        mock_exists,
         temp_output_dir
     ):
         """Test complete recording flow with post-processing enabled."""
+        # Setup recording mocks
+        mock_exists.return_value = True
+
+        # Mock audio detection to show it has content
+        mock_run.return_value = Mock(
+            stderr="""
+            [Parsed_volumedetect_0 @ 0x123] mean_volume: -25.5 dB
+            [Parsed_volumedetect_0 @ 0x123] max_volume: -10.2 dB
+            """
+        )
+
         # Setup recording mocks
         mock_create_recording.return_value = 1
         mock_getsize.return_value = 1024 * 1024

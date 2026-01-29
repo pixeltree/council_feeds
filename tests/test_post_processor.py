@@ -84,10 +84,73 @@ class TestPostProcessor:
         assert len(periods) == 0
 
     @patch('post_processor.subprocess.run')
+    def test_has_audio_with_audio(self, mock_run):
+        """Test has_audio when recording has audio content."""
+        mock_run.return_value = Mock(
+            stderr="""
+            [Parsed_volumedetect_0 @ 0x123] mean_volume: -25.5 dB
+            [Parsed_volumedetect_0 @ 0x123] max_volume: -10.2 dB
+            """
+        )
+
+        processor = PostProcessor()
+        result = processor.has_audio('/fake/video.mp4')
+
+        assert result is True
+
+    @patch('post_processor.subprocess.run')
+    def test_has_audio_silent_recording(self, mock_run):
+        """Test has_audio when recording is silent."""
+        mock_run.return_value = Mock(
+            stderr="""
+            [Parsed_volumedetect_0 @ 0x123] mean_volume: -55.0 dB
+            [Parsed_volumedetect_0 @ 0x123] max_volume: -35.0 dB
+            """
+        )
+
+        processor = PostProcessor()
+        result = processor.has_audio('/fake/video.mp4')
+
+        assert result is False
+
+    @patch('post_processor.subprocess.run')
+    def test_has_audio_no_audio_stream(self, mock_run):
+        """Test has_audio when no audio stream detected."""
+        mock_run.return_value = Mock(stderr="No audio stream found")
+
+        processor = PostProcessor()
+        result = processor.has_audio('/fake/video.mp4')
+
+        assert result is False
+
+    @patch('post_processor.subprocess.run')
+    def test_has_audio_timeout(self, mock_run):
+        """Test has_audio when analysis times out."""
+        mock_run.side_effect = subprocess.TimeoutExpired('ffmpeg', 300)
+
+        processor = PostProcessor()
+        result = processor.has_audio('/fake/video.mp4')
+
+        # Should assume has audio if check fails
+        assert result is True
+
+    @patch('post_processor.subprocess.run')
+    def test_has_audio_error(self, mock_run):
+        """Test has_audio when error occurs."""
+        mock_run.side_effect = Exception("FFmpeg error")
+
+        processor = PostProcessor()
+        result = processor.has_audio('/fake/video.mp4')
+
+        # Should assume has audio if check fails
+        assert result is True
+
+    @patch('post_processor.subprocess.run')
     def test_get_video_duration_success(self, mock_run):
         """Test getting video duration successfully."""
         mock_run.return_value = Mock(
-            stdout='{"format": {"duration": "14400.5"}}'
+            stdout='{"format": {"duration": "14400.5"}}',
+            returncode=0
         )
 
         processor = PostProcessor()
@@ -212,13 +275,15 @@ class TestPostProcessor:
         assert result['success'] is False
         assert 'duration' in result['error'].lower()
 
+    @patch('post_processor.PostProcessor.has_audio')
     @patch('post_processor.os.path.exists')
     @patch('post_processor.PostProcessor.get_video_duration')
     @patch('post_processor.PostProcessor.detect_silent_periods')
-    def test_process_recording_no_breaks(self, mock_detect, mock_duration, mock_exists):
+    def test_process_recording_no_breaks(self, mock_detect, mock_duration, mock_exists, mock_has_audio):
         """Test processing when no breaks detected."""
         mock_exists.return_value = True
         mock_duration.return_value = 3600
+        mock_has_audio.return_value = True
         mock_detect.return_value = []
 
         processor = PostProcessor()
@@ -228,17 +293,96 @@ class TestPostProcessor:
         assert result['segments_created'] == 0
         assert 'No breaks detected' in result['message']
 
+    @patch('post_processor.db.add_recording_log')
+    @patch('post_processor.db.update_recording')
+    @patch('post_processor.os.remove')
+    @patch('post_processor.PostProcessor.has_audio')
+    @patch('post_processor.os.path.exists')
+    @patch('post_processor.PostProcessor.get_video_duration')
+    def test_process_recording_no_audio_deletes_file(
+        self,
+        mock_duration,
+        mock_exists,
+        mock_has_audio,
+        mock_remove,
+        mock_update_recording,
+        mock_add_log
+    ):
+        """Test processing deletes file when no audio detected."""
+        mock_exists.return_value = True
+        mock_duration.return_value = 3600
+        mock_has_audio.return_value = False
+
+        processor = PostProcessor()
+        result = processor.process_recording('/fake/video.mp4', recording_id=123)
+
+        assert result['success'] is False
+        assert result['deleted'] is True
+        assert 'No audio detected' in result['error']
+        mock_remove.assert_called_once_with('/fake/video.mp4')
+        mock_update_recording.assert_called_once()
+
+    @patch('post_processor.os.remove')
+    @patch('post_processor.PostProcessor.has_audio')
+    @patch('post_processor.os.path.exists')
+    @patch('post_processor.PostProcessor.get_video_duration')
+    def test_process_recording_no_audio_without_recording_id(
+        self,
+        mock_duration,
+        mock_exists,
+        mock_has_audio,
+        mock_remove
+    ):
+        """Test processing deletes file when no audio and no recording_id."""
+        mock_exists.return_value = True
+        mock_duration.return_value = 3600
+        mock_has_audio.return_value = False
+
+        processor = PostProcessor()
+        result = processor.process_recording('/fake/video.mp4')
+
+        assert result['success'] is False
+        assert result['deleted'] is True
+        assert 'No audio detected' in result['error']
+        mock_remove.assert_called_once_with('/fake/video.mp4')
+
+    @patch('post_processor.os.remove')
+    @patch('post_processor.PostProcessor.has_audio')
+    @patch('post_processor.os.path.exists')
+    @patch('post_processor.PostProcessor.get_video_duration')
+    def test_process_recording_no_audio_delete_fails(
+        self,
+        mock_duration,
+        mock_exists,
+        mock_has_audio,
+        mock_remove
+    ):
+        """Test processing handles delete failure gracefully."""
+        mock_exists.return_value = True
+        mock_duration.return_value = 3600
+        mock_has_audio.return_value = False
+        mock_remove.side_effect = OSError("Permission denied")
+
+        processor = PostProcessor()
+        result = processor.process_recording('/fake/video.mp4')
+
+        assert result['success'] is False
+        assert result['deleted'] is True
+        assert 'No audio detected' in result['error']
+
     @patch('shutil.copy2')
     @patch('post_processor.os.path.getsize')
     @patch('post_processor.os.makedirs')
     @patch('post_processor.PostProcessor.extract_segment')
     @patch('post_processor.PostProcessor.detect_silent_periods')
+    @patch('post_processor.PostProcessor.has_audio')
     @patch('post_processor.PostProcessor.get_video_duration')
     @patch('post_processor.os.path.exists')
     def test_process_recording_with_segments(
         self,
         mock_exists,
         mock_duration,
+        mock_has_audio,
         mock_detect,
         mock_extract,
         mock_makedirs,
@@ -248,6 +392,7 @@ class TestPostProcessor:
         """Test full processing with segment creation."""
         mock_exists.return_value = True
         mock_duration.return_value = 7200  # 2 hours
+        mock_has_audio.return_value = True
         mock_detect.return_value = [(1800, 2100)]  # 5-minute break
         mock_extract.return_value = True
         mock_getsize.return_value = 1024 * 1024 * 100  # 100 MB
@@ -273,12 +418,14 @@ class TestPostProcessor:
     @patch('post_processor.os.makedirs')
     @patch('post_processor.PostProcessor.extract_segment')
     @patch('post_processor.PostProcessor.detect_silent_periods')
+    @patch('post_processor.PostProcessor.has_audio')
     @patch('post_processor.PostProcessor.get_video_duration')
     @patch('post_processor.os.path.exists')
     def test_process_recording_partial_failure(
         self,
         mock_exists,
         mock_duration,
+        mock_has_audio,
         mock_detect,
         mock_extract,
         mock_makedirs,
@@ -288,6 +435,7 @@ class TestPostProcessor:
         """Test processing when some segment extractions fail."""
         mock_exists.return_value = True
         mock_duration.return_value = 7200
+        mock_has_audio.return_value = True
         mock_detect.return_value = [(1800, 2100)]
         # First extract succeeds, second fails
         mock_extract.side_effect = [True, False]

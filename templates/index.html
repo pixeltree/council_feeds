@@ -13,6 +13,18 @@
         .pulse-dot {
             animation: pulse-animation 2s ease-in-out infinite;
         }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .loading-mini {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border: 2px solid #e5e7eb;
+            border-top-color: #fbbf24;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
     </style>
     <script>
         // Auto-refresh every 10 seconds
@@ -73,6 +85,46 @@
                 button.textContent = '🔄 Refresh Agenda';
             }
         }
+
+        async function cleanupStaleRecordings() {
+            // First, get stale recordings count
+            try {
+                const countResponse = await fetch('/api/recordings/stale');
+                const countResult = await countResponse.json();
+
+                if (countResult.count === 0) {
+                    alert('No stale recordings found!');
+                    return;
+                }
+
+                if (!confirm(`Found ${countResult.count} stale recording(s). Delete them all?`)) {
+                    return;
+                }
+
+                const button = document.getElementById('cleanup-stale-button');
+                button.disabled = true;
+                button.innerHTML = 'Cleaning up...';
+
+                const response = await fetch('/api/recordings/stale/cleanup', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`Successfully deleted ${result.deleted_count} stale recording(s)`);
+                    location.reload();
+                } else {
+                    alert('Failed to cleanup stale recordings: ' + (result.error || 'Unknown error'));
+                    button.disabled = false;
+                    button.innerHTML = '🗑️ Clean Up Stale';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                const button = document.getElementById('cleanup-stale-button');
+                button.disabled = false;
+                button.innerHTML = '🗑️ Clean Up Stale';
+            }
+        }
     </script>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
@@ -120,7 +172,12 @@
 
         <!-- Recording Statistics Card -->
         <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
-            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">Recording Statistics</h2>
+            <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
+                <h2 class="text-gray-800 text-2xl font-bold">Recording Statistics</h2>
+                <button id="cleanup-stale-button" onclick="cleanupStaleRecordings()" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                    🗑️ Clean Up Stale
+                </button>
+            </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="bg-gray-50 p-4 rounded-lg border-l-4 border-indigo-600">
                     <div class="text-gray-600 text-sm mb-1">Total Recordings</div>
@@ -183,13 +240,40 @@
                             {% endif %}
                         </div>
                     </div>
-                    <span class="px-3 py-1 rounded-full text-xs font-semibold
-                        {% if recording.status == 'completed' %}bg-green-100 text-green-700
-                        {% elif recording.status == 'failed' %}bg-red-100 text-red-700
-                        {% elif recording.status == 'stopped' %}bg-yellow-100 text-yellow-700
-                        {% else %}bg-orange-100 text-orange-700{% endif %}">
-                        {{ recording.status.upper() }}
-                    </span>
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <span class="px-3 py-1 rounded-full text-xs font-semibold
+                            {% if recording.status == 'completed' %}bg-green-100 text-green-700
+                            {% elif recording.status == 'failed' %}bg-red-100 text-red-700
+                            {% else %}bg-orange-100 text-orange-700{% endif %}">
+                            {{ recording.status.upper() }}
+                        </span>
+
+                        <!-- Post-processing indicator for completed recordings -->
+                        {% if recording.status == 'completed' %}
+                            {% set pp_status = recording.post_process_status or 'pending' %}
+                            {% if pp_status == 'completed' %}
+                                <span class="text-xs text-blue-600 inline-flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                    <span>Processed</span>
+                                </span>
+                            {% elif pp_status == 'processing' %}
+                                <span class="text-xs text-yellow-600 inline-flex items-center gap-1">
+                                    <span class="loading-mini"></span>
+                                    <span>Processing...</span>
+                                </span>
+                            {% elif pp_status == 'failed' %}
+                                <span class="text-xs text-red-600 inline-flex items-center gap-1">
+                                    <span>⚠️</span>
+                                    <span>PP Failed</span>
+                                </span>
+                            {% else %}
+                                <span class="text-xs text-gray-500 inline-flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>
+                                    <span>Not processed</span>
+                                </span>
+                            {% endif %}
+                        {% endif %}
+                    </div>
                 </div>
                 {% endfor %}
             {% else %}

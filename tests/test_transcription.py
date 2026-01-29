@@ -34,23 +34,23 @@ class TestTranscriptionService:
         service = TranscriptionService(device="cpu")
         assert service.device == "cpu"
 
-    @patch('transcription_service.whisper.load_model')
-    def test_load_whisper_model(self, mock_load):
+    @patch('transcription_service.WhisperModel')
+    def test_load_whisper_model(self, mock_whisper_model):
         """Test lazy loading of Whisper model."""
         mock_model = Mock()
-        mock_load.return_value = mock_model
+        mock_whisper_model.return_value = mock_model
 
         service = TranscriptionService(whisper_model="tiny", device="cpu")
 
         # First call should load
         model = service._load_whisper_model()
         assert model == mock_model
-        mock_load.assert_called_once_with("tiny", device="cpu")
+        mock_whisper_model.assert_called_once_with("tiny", device="cpu", compute_type="int8")
 
         # Second call should return cached
         model2 = service._load_whisper_model()
         assert model2 == mock_model
-        assert mock_load.call_count == 1  # Not called again
+        assert mock_whisper_model.call_count == 1  # Not called again
 
     def test_load_diarization_pipeline_no_token(self):
         """Test diarization pipeline fails without token."""
@@ -60,6 +60,7 @@ class TestTranscriptionService:
             service._load_diarization_pipeline()
 
     @patch('transcription_service.Pipeline.from_pretrained')
+    @patch.dict('os.environ', {}, clear=True)
     def test_load_diarization_pipeline_cpu(self, mock_pipeline):
         """Test lazy loading of diarization pipeline on CPU."""
         mock_pipe = Mock()
@@ -69,10 +70,12 @@ class TestTranscriptionService:
 
         pipeline = service._load_diarization_pipeline()
         assert pipeline == mock_pipe
+        # Token is now set via environment variable, not passed as parameter
         mock_pipeline.assert_called_once_with(
-            "pyannote/speaker-diarization-3.1",
-            use_auth_token="test_token"
+            "pyannote/speaker-diarization-3.1"
         )
+        # Verify token was set in environment
+        assert os.environ.get('HF_TOKEN') == 'test_token'
 
     def test_merge_transcription_and_diarization(self):
         """Test merging transcription with diarization."""
@@ -167,22 +170,26 @@ class TestTranscriptionService:
         assert text.count('[SPEAKER_00]') == 2  # Speaker changes back
         assert text.count('[SPEAKER_01]') == 1
 
+    @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
-    @patch('transcription_service.os.path.exists')
-    def test_transcribe_with_speakers_success(self, mock_exists, mock_load_dia, mock_load_whisper):
+    @patch('os.path.exists')
+    def test_transcribe_with_speakers_success(self, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
         """Test complete transcription pipeline."""
         mock_exists.return_value = True
 
-        # Mock Whisper model
+        # Mock subprocess.run for ffmpeg audio extraction
+        mock_subprocess.return_value = Mock(returncode=0)
+
+        # Mock Whisper model (faster-whisper returns segments generator and info tuple)
         mock_whisper = Mock()
-        mock_whisper.transcribe.return_value = {
-            'text': 'Full transcript text',
-            'language': 'en',
-            'segments': [
-                {'start': 0.0, 'end': 5.0, 'text': ' Hello'}
-            ]
-        }
+        mock_segment = Mock()
+        mock_segment.start = 0.0
+        mock_segment.end = 5.0
+        mock_segment.text = ' Hello'
+        mock_info = Mock()
+        mock_info.language = 'en'
+        mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
         # Mock diarization pipeline
@@ -197,7 +204,16 @@ class TestTranscriptionService:
         service = TranscriptionService(hf_token="test_token")
 
         # Test without saving to file
-        with patch('builtins.open', mock_open()):
+        with patch('builtins.open', mock_open()), \
+             patch('tempfile.NamedTemporaryFile') as mock_temp, \
+             patch('os.remove'):
+            # Mock the temporary file
+            mock_temp_file = Mock()
+            mock_temp_file.name = '/tmp/test.wav'
+            mock_temp.__enter__ = Mock(return_value=mock_temp_file)
+            mock_temp.__exit__ = Mock(return_value=False)
+            mock_temp.return_value = mock_temp
+
             result = service.transcribe_with_speakers(
                 '/fake/video.mp4',
                 save_to_file=False
@@ -205,7 +221,7 @@ class TestTranscriptionService:
 
         assert result['file'] == '/fake/video.mp4'
         assert result['language'] == 'en'
-        assert result['full_text'] == 'Full transcript text'
+        assert ' Hello' in result['full_text']
         assert len(result['segments']) == 1
         assert result['segments'][0]['speaker'] == 'SPEAKER_00'
         assert result['num_speakers'] == 1

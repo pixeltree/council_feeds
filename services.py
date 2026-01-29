@@ -18,6 +18,9 @@ from config import (
     COUNCIL_CALENDAR_API,
     STREAM_PAGE_URL,
     STREAM_URL_PATTERNS,
+    STREAM_URLS_BY_ROOM,
+    COUNCIL_CHAMBER,
+    ENGINEERING_TRADITIONS_ROOM,
     MEETING_BUFFER_BEFORE,
     MEETING_BUFFER_AFTER,
     YTDLP_COMMAND,
@@ -26,13 +29,20 @@ from config import (
     ENABLE_POST_PROCESSING,
     POST_PROCESS_SILENCE_THRESHOLD_DB,
     POST_PROCESS_MIN_SILENCE_DURATION,
+    AUDIO_DETECTION_MEAN_THRESHOLD_DB,
+    AUDIO_DETECTION_MAX_THRESHOLD_DB,
     ENABLE_TRANSCRIPTION,
     WHISPER_MODEL,
     HUGGINGFACE_TOKEN,
     RECORDING_FORMAT,
     ENABLE_SEGMENTED_RECORDING,
     SEGMENT_DURATION,
-    RECORDING_RECONNECT
+    RECORDING_RECONNECT,
+    ENABLE_STATIC_DETECTION,
+    STATIC_MIN_GROWTH_KB,
+    STATIC_CHECK_INTERVAL,
+    STATIC_MAX_FAILURES,
+    STATIC_SCENE_THRESHOLD
 )
 import os
 
@@ -44,41 +54,53 @@ class CalendarService:
         self.api_url = api_url
         self.timezone = timezone
 
+    def determine_room(self, title: str) -> str:
+        """Determine meeting room based on title."""
+        title_lower = title.lower()
+        if 'council meeting' in title_lower:
+            return COUNCIL_CHAMBER
+        else:
+            # All committee meetings use Engineering Traditions Room
+            return ENGINEERING_TRADITIONS_ROOM
+
     def fetch_council_meetings(self) -> List[Dict]:
-        """Fetch upcoming Council Chamber meetings from Calgary Open Data API."""
+        """Fetch upcoming meetings from Calgary Open Data API (both Council and Committee)."""
         try:
             response = requests.get(self.api_url, timeout=15)
             response.raise_for_status()
             meetings = response.json()
 
-            # Filter for Council meetings (held in Council Chamber)
-            council_meetings = []
+            # Process all meetings and determine their rooms
+            all_meetings = []
             for meeting in meetings:
                 title = meeting.get('title', '')
-                if 'Council meeting' in title:
-                    try:
-                        # Parse the meeting date
-                        date_str = meeting.get('meeting_date', '')
-                        # Parse as naive datetime first
-                        meeting_dt_naive = date_parser.parse(date_str, fuzzy=True)
+                try:
+                    # Parse the meeting date
+                    date_str = meeting.get('meeting_date', '')
+                    # Parse as naive datetime first
+                    meeting_dt_naive = date_parser.parse(date_str, fuzzy=True)
 
-                        # Localize to Calgary timezone
-                        meeting_dt = self.timezone.localize(meeting_dt_naive)
+                    # Localize to Calgary timezone
+                    meeting_dt = self.timezone.localize(meeting_dt_naive)
 
-                        council_meetings.append({
-                            'title': title,
-                            'datetime': meeting_dt,
-                            'raw_date': date_str,
-                            'link': meeting.get('link', '')
-                        })
-                    except (ValueError, TypeError) as e:
-                        print(f"Warning: Could not parse date '{date_str}': {e}")
-                        continue
+                    # Determine room based on title
+                    room = self.determine_room(title)
+
+                    all_meetings.append({
+                        'title': title,
+                        'datetime': meeting_dt,
+                        'raw_date': date_str,
+                        'link': meeting.get('link', ''),
+                        'room': room
+                    })
+                except (ValueError, TypeError) as e:
+                    print(f"Warning: Could not parse date '{date_str}': {e}")
+                    continue
 
             # Sort by datetime
-            council_meetings.sort(key=lambda x: x['datetime'])
+            all_meetings.sort(key=lambda x: x['datetime'])
 
-            return council_meetings
+            return all_meetings
 
         except Exception as e:
             print(f"Error fetching council meetings: {e}")
@@ -172,35 +194,51 @@ class StreamService:
         self.stream_url_patterns = stream_url_patterns or STREAM_URL_PATTERNS
         self.ytdlp_command = ytdlp_command
 
-    def get_stream_url(self) -> Optional[str]:
-        """Extract the HLS stream URL using yt-dlp or try common patterns."""
-        # Try using yt-dlp to extract the stream URL
-        try:
-            result = subprocess.run(
-                [self.ytdlp_command, '-g', '--no-warnings', self.stream_page_url],
-                capture_output=True,
-                text=True,
-                timeout=15
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                url = result.stdout.strip()
-                print(f"yt-dlp found stream: {url}")
-                return url
-        except subprocess.TimeoutExpired:
-            print("yt-dlp timed out")
-        except FileNotFoundError:
-            print("yt-dlp not found, trying manual methods...")
-        except Exception as e:
-            print(f"yt-dlp error: {e}")
+    def get_stream_url(self, room: Optional[str] = None) -> Optional[str]:
+        """Extract the HLS stream URL using yt-dlp or try common patterns.
 
-        # Try common ISILive URL patterns
-        for pattern_url in self.stream_url_patterns:
+        Args:
+            room: Optional room name to try room-specific stream URLs first
+        """
+        # Determine which URL patterns to try based on room
+        patterns_to_try = []
+        if room and room in STREAM_URLS_BY_ROOM:
+            # Try room-specific URLs first
+            patterns_to_try = STREAM_URLS_BY_ROOM[room]
+            print(f"Trying {room} stream URLs...")
+        else:
+            # Fall back to all patterns
+            patterns_to_try = self.stream_url_patterns
+
+        # Try using yt-dlp to extract the stream URL (skip if room-specific)
+        if not room:
+            try:
+                result = subprocess.run(
+                    [self.ytdlp_command, '-g', '--no-warnings', self.stream_page_url],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    url = result.stdout.strip()
+                    print(f"yt-dlp found stream: {url}")
+                    return url
+            except subprocess.TimeoutExpired:
+                print("yt-dlp timed out")
+            except FileNotFoundError:
+                print("yt-dlp not found, trying manual methods...")
+            except Exception as e:
+                print(f"yt-dlp error: {e}")
+
+        # Try room-specific or common ISILive URL patterns
+        for pattern_url in patterns_to_try:
             try:
                 response = requests.head(pattern_url, timeout=5, allow_redirects=True)
                 if response.status_code == 200:
                     print(f"Found working stream pattern: {pattern_url}")
                     return pattern_url
-            except:
+            except Exception:
+                # Try next pattern if this one fails
                 pass
 
         # Try parsing the page
@@ -239,14 +277,14 @@ class StreamService:
         try:
             response = requests.head(stream_url, timeout=10, allow_redirects=True)
             return response.status_code == 200
-        except:
+        except Exception:
             # Try GET request as fallback
             try:
                 response = requests.get(stream_url, timeout=10, stream=True)
                 return response.status_code == 200
-            except:
+            except Exception:
+                # Return False if both HEAD and GET fail
                 return False
-
 
 class RecordingService:
     """Service for recording streams using ffmpeg."""
@@ -374,9 +412,83 @@ class RecordingService:
 
             # Monitor the process
             import time
+            import glob
+            static_checks = 0
+
             while True:
-                # Check if stream is still live every 30 seconds
-                time.sleep(30)
+                # Check if stream is still live
+                time.sleep(STATIC_CHECK_INTERVAL)
+
+                # Check for static content using ffmpeg scene detection
+                if ENABLE_STATIC_DETECTION:
+                    # Get the most recent file to analyze
+                    file_to_check = None
+                    if ENABLE_SEGMENTED_RECORDING and output_pattern:
+                        base_pattern = output_pattern.replace('%03d', '*')
+                        segment_files = sorted(glob.glob(base_pattern))
+                        if segment_files:
+                            file_to_check = segment_files[-1]  # Most recent segment
+                    elif os.path.exists(output_file):
+                        file_to_check = output_file
+
+                    if file_to_check and os.path.exists(file_to_check):
+                        # Use ffmpeg to detect audio levels - static placeholder has silence
+                        try:
+                            # Analyze audio volume levels
+                            result = subprocess.run(
+                                [
+                                    self.ffmpeg_command, '-i', file_to_check,
+                                    '-af', 'volumedetect',
+                                    '-f', 'null', '-'
+                                ],
+                                capture_output=True,
+                                text=True,
+                                timeout=15  # Increased timeout for large files
+                            )
+
+                            # Parse mean and max volume from output
+                            mean_volume = None
+                            max_volume = None
+                            for line in result.stderr.split('\n'):
+                                if 'mean_volume:' in line:
+                                    try:
+                                        mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                                    except (ValueError, IndexError):
+                                        # Ignore parsing errors in ffmpeg output; leave mean_volume as None
+                                        pass
+                                if 'max_volume:' in line:
+                                    try:
+                                        max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                                    except (ValueError, IndexError):
+                                        # Ignore parsing errors in ffmpeg output; leave max_volume as None
+                                        pass
+
+                            print(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+
+                            # If audio is very quiet, likely static placeholder
+                            # Use same thresholds as post-processing for consistency
+                            if mean_volume and max_volume:
+                                if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
+                                    static_checks += 1
+                                    print(f"Warning: Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
+
+                                    if static_checks >= STATIC_MAX_FAILURES:
+                                        print("Stream appears to be static (no audio/placeholder). Stopping recording...")
+                                        db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
+                                        self.stop_requested = True
+                                else:
+                                    if static_checks > 0:
+                                        print(f"[STATIC CHECK] Audio detected, resetting counter")
+                                    static_checks = 0  # Reset counter if audio detected
+                            else:
+                                print(f"[STATIC CHECK] Could not parse audio levels")
+
+                        except subprocess.TimeoutExpired:
+                            print(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_to_check)} - file may be corrupted or very large, skipping check")
+                        except subprocess.CalledProcessError as e:
+                            print(f"[STATIC CHECK] Audio detection failed (ffmpeg error): {e}")
+                        except Exception as e:
+                            print(f"[STATIC CHECK] Audio detection failed: {e}")
 
                 # Check if stop was requested
                 if self.stop_requested:
@@ -389,7 +501,7 @@ class RecordingService:
                     import signal
                     try:
                         process.send_signal(signal.SIGINT)
-                    except:
+                    except OSError:
                         # If SIGINT fails, use terminate
                         process.terminate()
 
@@ -416,7 +528,8 @@ class RecordingService:
                     import signal
                     try:
                         process.send_signal(signal.SIGINT)
-                    except:
+                    except OSError:
+                        # If SIGINT fails, use terminate
                         process.terminate()
 
                     # Wait for ffmpeg to finish writing
@@ -456,15 +569,73 @@ class RecordingService:
             else:
                 print(f"Recording saved: {output_file}")
 
-            # Update recording status in database
-            status = 'completed' if not self.stop_requested else 'stopped'
-            db.update_recording(recording_id, end_time, status)
-
-            # Log statistics
+            # Check if recording has any content before marking as completed
+            has_content = False
             if os.path.exists(output_file):
                 file_size = os.path.getsize(output_file)
                 duration = int((end_time - start_time).total_seconds())
                 print(f"Duration: {duration}s, Size: {file_size / (1024**2):.1f} MB")
+
+                # Check for audio content using volumedetect
+                print("Checking if recording has audio content...")
+                try:
+                    result = subprocess.run(
+                        [self.ffmpeg_command, '-i', output_file, '-af', 'volumedetect', '-f', 'null', '-'],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+
+                    mean_volume = None
+                    max_volume = None
+                    for line in result.stderr.split('\n'):
+                        if 'mean_volume:' in line:
+                            try:
+                                mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                            except (ValueError, IndexError):
+                                # Ignore parsing errors in ffmpeg output; leave mean_volume as None
+                                pass
+                        if 'max_volume:' in line:
+                            try:
+                                max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                            except (ValueError, IndexError):
+                                # Ignore parsing errors in ffmpeg output; leave max_volume as None
+                                pass
+
+                    if mean_volume and max_volume:
+                        print(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                        # If audio is reasonably loud, it has content
+                        if mean_volume > -50 or max_volume > -30:
+                            has_content = True
+                        else:
+                            print("Recording appears to have no real audio content (levels too low)")
+                    else:
+                        print("Warning: Could not detect audio levels, assuming has content")
+                        has_content = True  # Default to keeping if check fails
+
+                except Exception as e:
+                    print(f"Warning: Audio check failed: {e}, assuming has content")
+                    has_content = True  # Default to keeping if check fails
+
+            # If no content, remove the recording
+            if not has_content:
+                print("No audio content detected - removing empty recording")
+                try:
+                    if os.path.exists(output_file):
+                        os.remove(output_file)
+                        print(f"Removed empty recording file: {output_file}")
+                except Exception as e:
+                    print(f"Warning: Could not delete file: {e}")
+
+                # Mark recording as failed in database
+                db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
+                print("Recording marked as failed (no content)")
+                return True  # Return success since we handled it properly
+
+            # Update recording status in database as completed
+            # Both naturally ended and manually stopped recordings are marked as completed
+            # since they cannot be restarted and should be available for post-processing
+            db.update_recording(recording_id, end_time, 'completed')
 
             # Post-processing (experimental)
             if ENABLE_POST_PROCESSING:
@@ -476,9 +647,13 @@ class RecordingService:
                         min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
                         ffmpeg_command=self.ffmpeg_command
                     )
-                    result = processor.process_recording(output_file)
+                    result = processor.process_recording(output_file, recording_id)
                     if result.get('success'):
                         print(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
+                    elif result.get('deleted'):
+                        print(f"[POST-PROCESS] Recording removed: {result.get('message', 'No audio detected')}")
+                        # Skip transcription since file was deleted
+                        return True
                     else:
                         print(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
                 except Exception as e:
@@ -577,11 +752,13 @@ class RecordingService:
                 for segment in segments:
                     try:
                         os.remove(segment)
-                    except:
+                    except OSError:
+                        # Best-effort cleanup; ignore if file cannot be removed
                         pass
                 try:
                     os.remove(concat_file)
-                except:
+                except OSError:
+                    # Best-effort cleanup; ignore if file cannot be removed
                     pass
                 return output_file
             else:
