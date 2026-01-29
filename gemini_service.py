@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""
+Gemini Service for Calgary Council Stream Recorder.
+Uses Google Gemini API to refine speaker diarization with meeting context.
+"""
+
+import json
+from typing import Dict, List, Optional
+from datetime import datetime
+
+
+def refine_diarization(
+    pyannote_json: Dict,
+    expected_speakers: List[Dict[str, str]],
+    meeting_title: str,
+    api_key: Optional[str] = None,
+    model: str = "gemini-1.5-flash",
+    timeout: int = 30
+) -> Dict:
+    """
+    Refine speaker diarization using Gemini AI with meeting context.
+
+    Args:
+        pyannote_json: Original diarization JSON from pyannote with generic speaker labels
+        expected_speakers: List of expected speakers from agenda parser
+        meeting_title: Title of the meeting for context
+        api_key: Gemini API key (required)
+        model: Gemini model to use (default: gemini-1.5-flash)
+        timeout: API timeout in seconds (default: 30)
+
+    Returns:
+        Refined diarization JSON with real speaker names where confident, or
+        original JSON on any failure (graceful degradation)
+    """
+    # Handle missing API key
+    if not api_key:
+        print("[GEMINI] ERROR: No API key provided, returning original diarization")
+        return pyannote_json
+
+    # Handle empty speakers list (still attempt refinement with context)
+    if not expected_speakers:
+        print("[GEMINI] WARNING: No expected speakers provided, will use context only")
+
+    print(f"[GEMINI] Sending diarization to Gemini (model: {model})")
+
+    # Get segment count for logging
+    segments = pyannote_json.get('segments', pyannote_json.get('diarization', []))
+    num_segments = len(segments)
+    num_speakers = len(expected_speakers)
+
+    print(f"[GEMINI] Processing {num_segments} diarization segments with {num_speakers} expected speakers")
+
+    try:
+        # Import google-generativeai here to avoid import errors if not installed
+        import google.generativeai as genai
+
+        # Configure API
+        genai.configure(api_key=api_key)
+
+        # Create the model
+        model_instance = genai.GenerativeModel(model)
+
+        # Construct the prompt
+        prompt = _construct_prompt(pyannote_json, expected_speakers, meeting_title)
+
+        # Call the API
+        response = model_instance.generate_content(
+            prompt,
+            generation_config={'temperature': 0.1}  # Low temperature for consistency
+        )
+
+        # Extract JSON from response
+        refined_json = _extract_json_from_response(response.text)
+
+        if refined_json is None:
+            print("[GEMINI] WARNING: Could not parse valid JSON from response, using original")
+            return pyannote_json
+
+        # Add metadata about refinement
+        refined_json['refined_by'] = 'gemini'
+        refined_json['model'] = model
+        refined_json['timestamp'] = datetime.utcnow().isoformat()
+        refined_json['original_file'] = pyannote_json.get('file', '')
+
+        # Count how many speakers were refined
+        original_labels = _count_unique_speakers(pyannote_json)
+        refined_labels = _count_unique_speakers(refined_json)
+        generic_count = sum(1 for label in refined_labels if label.startswith('SPEAKER_'))
+
+        print(f"[GEMINI] Refined {len(refined_labels) - generic_count} speaker labels, kept {generic_count} generic")
+
+        return refined_json
+
+    except ImportError:
+        print("[GEMINI] ERROR: google-generativeai not installed, returning original diarization")
+        return pyannote_json
+    except Exception as e:
+        print(f"[GEMINI] ERROR: API call failed: {e}")
+        return pyannote_json
+
+
+def _construct_prompt(
+    pyannote_json: Dict,
+    expected_speakers: List[Dict[str, str]],
+    meeting_title: str
+) -> str:
+    """
+    Construct the prompt for Gemini API.
+    """
+    # Format expected speakers list
+    if expected_speakers:
+        speaker_list = "\n".join([
+            f"  - {s['name']} ({s['role']}, confidence: {s['confidence']})"
+            for s in expected_speakers
+        ])
+    else:
+        speaker_list = "  - No speaker list available (use meeting context only)"
+
+    # Format pyannote JSON compactly
+    pyannote_str = json.dumps(pyannote_json, indent=2)
+
+    prompt = f"""You are refining speaker diarization output from a Calgary City Council meeting.
+
+Meeting: {meeting_title}
+
+Expected Speakers (may be incomplete, especially for public hearings):
+{speaker_list}
+
+Original Diarization (with generic labels):
+{pyannote_str}
+
+Task: Map generic speaker labels (SPEAKER_00, SPEAKER_01, etc.) to real names where you have HIGH confidence (>80%) based on:
+- Speaking patterns and context from the transcription text
+- Expected speaker roles and likely speaking order
+- Meeting flow and structure
+- Content of what each speaker says
+
+Critical Rules:
+1. Preserve ALL timestamps EXACTLY as they are
+2. Preserve the EXACT JSON structure (same keys, same nesting)
+3. ONLY replace speaker labels where confidence is HIGH (>80%)
+4. Keep "SPEAKER_XX" labels for uncertain mappings - this is IMPORTANT
+5. Public hearings have many unlisted speakers - keep them as generic labels
+6. If a speaker is clearly not in the expected list, keep it generic
+7. Return ONLY valid JSON, no explanation or commentary
+
+Output the refined diarization JSON with the same structure:"""
+
+    return prompt
+
+
+def _extract_json_from_response(response_text: str) -> Optional[Dict]:
+    """
+    Extract and validate JSON from Gemini response.
+
+    Gemini sometimes wraps JSON in markdown code blocks, so we need to handle that.
+    """
+    try:
+        # Try parsing directly first
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        # Try extracting from markdown code block
+        import re
+
+        # Pattern: ```json ... ``` or ``` ... ```
+        json_pattern = re.compile(r'```(?:json)?\s*(\{.*?\})\s*```', re.DOTALL)
+        match = json_pattern.search(response_text)
+
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Try finding any JSON object in the text
+        json_pattern = re.compile(r'\{.*\}', re.DOTALL)
+        match = json_pattern.search(response_text)
+
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+
+def _count_unique_speakers(diarization_json: Dict) -> List[str]:
+    """
+    Count unique speaker labels in diarization JSON.
+    """
+    segments = diarization_json.get('segments', diarization_json.get('diarization', []))
+    speakers = set(seg.get('speaker', 'UNKNOWN') for seg in segments)
+    return list(speakers)

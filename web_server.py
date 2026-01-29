@@ -366,28 +366,87 @@ def download_segment_transcript(segment_id):
 
 @app.route('/download/diarization/<int:recording_id>')
 def download_recording_diarization(recording_id):
-    """Download diarization data (with confidence scores) for a recording."""
+    """Download diarization data (prefers Gemini-refined, falls back to pyannote)."""
     recording = db.get_recording_by_id(recording_id)
 
     if not recording:
         return "Recording not found", 404
 
-    # Diarization file is saved alongside transcript
+    # Try Gemini-refined first
+    gemini_path = recording.get('diarization_gemini_path')
+    if gemini_path and os.path.exists(gemini_path):
+        print(f"[WEB] Serving gemini diarization for recording {recording_id}")
+        return send_file(gemini_path, as_attachment=True)
+
+    # Fall back to pyannote
+    pyannote_path = recording.get('diarization_pyannote_path')
+    if pyannote_path and os.path.exists(pyannote_path):
+        print(f"[WEB] Serving pyannote diarization for recording {recording_id}")
+        return send_file(pyannote_path, as_attachment=True)
+
+    # Fall back to legacy path
     file_path = recording.get('file_path')
-    if not file_path:
-        return "Recording file path not found", 404
+    if file_path:
+        legacy_path = file_path + '.diarization.json'
+        if os.path.exists(legacy_path):
+            print(f"[WEB] Serving legacy diarization for recording {recording_id}")
+            return send_file(legacy_path, as_attachment=True)
 
-    diarization_path = file_path + '.diarization.json'
+    print(f"[WEB] Diarization file not found for recording {recording_id}")
+    return "Diarization file not found", 404
 
-    if not os.path.exists(diarization_path):
-        return "Diarization file not found", 404
 
-    return send_file(diarization_path, as_attachment=True)
+@app.route('/download/diarization/pyannote/<int:recording_id>')
+def download_recording_diarization_pyannote(recording_id):
+    """Download pyannote diarization data for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    pyannote_path = recording.get('diarization_pyannote_path')
+    if pyannote_path and os.path.exists(pyannote_path):
+        print(f"[WEB] Serving pyannote diarization for recording {recording_id}")
+        return send_file(pyannote_path, as_attachment=True)
+
+    # Fall back to trying file_path based path
+    file_path = recording.get('file_path')
+    if file_path:
+        fallback_path = file_path + '.diarization.pyannote.json'
+        if os.path.exists(fallback_path):
+            return send_file(fallback_path, as_attachment=True)
+
+    print(f"[WEB] Pyannote diarization file not found for recording {recording_id}")
+    return "Pyannote diarization file not found", 404
+
+
+@app.route('/download/diarization/gemini/<int:recording_id>')
+def download_recording_diarization_gemini(recording_id):
+    """Download Gemini-refined diarization data for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    gemini_path = recording.get('diarization_gemini_path')
+    if gemini_path and os.path.exists(gemini_path):
+        print(f"[WEB] Serving gemini diarization for recording {recording_id}")
+        return send_file(gemini_path, as_attachment=True)
+
+    # Fall back to trying file_path based path
+    file_path = recording.get('file_path')
+    if file_path:
+        fallback_path = file_path + '.diarization.gemini.json'
+        if os.path.exists(fallback_path):
+            return send_file(fallback_path, as_attachment=True)
+
+    print(f"[WEB] Gemini diarization file not found for recording {recording_id}")
+    return "Gemini diarization file not found", 404
 
 
 @app.route('/download/diarization/segment/<int:segment_id>')
 def download_segment_diarization(segment_id):
-    """Download diarization data (with confidence scores) for a segment."""
+    """Download diarization data for a segment (prefers Gemini, falls back to pyannote)."""
     segments = db.get_db_connection()
 
     with segments as conn:
@@ -399,12 +458,67 @@ def download_segment_diarization(segment_id):
             return "Segment not found", 404
 
         file_path = row['file_path']
-        diarization_path = file_path + '.diarization.json'
 
-        if not os.path.exists(diarization_path):
-            return "Diarization file not found", 404
+        # Try Gemini first
+        gemini_path = file_path + '.diarization.gemini.json'
+        if os.path.exists(gemini_path):
+            return send_file(gemini_path, as_attachment=True)
 
-        return send_file(diarization_path, as_attachment=True)
+        # Try pyannote
+        pyannote_path = file_path + '.diarization.pyannote.json'
+        if os.path.exists(pyannote_path):
+            return send_file(pyannote_path, as_attachment=True)
+
+        # Fall back to legacy
+        legacy_path = file_path + '.diarization.json'
+        if os.path.exists(legacy_path):
+            return send_file(legacy_path, as_attachment=True)
+
+        return "Diarization file not found", 404
+
+
+@app.route('/download/diarization/pyannote/segment/<int:segment_id>')
+def download_segment_diarization_pyannote(segment_id):
+    """Download pyannote diarization data for a segment."""
+    segments = db.get_db_connection()
+
+    with segments as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+
+        if not row or not row['file_path']:
+            return "Segment not found", 404
+
+        file_path = row['file_path']
+        pyannote_path = file_path + '.diarization.pyannote.json'
+
+        if os.path.exists(pyannote_path):
+            return send_file(pyannote_path, as_attachment=True)
+
+        return "Pyannote diarization file not found", 404
+
+
+@app.route('/download/diarization/gemini/segment/<int:segment_id>')
+def download_segment_diarization_gemini(segment_id):
+    """Download Gemini-refined diarization data for a segment."""
+    segments = db.get_db_connection()
+
+    with segments as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+
+        if not row or not row['file_path']:
+            return "Segment not found", 404
+
+        file_path = row['file_path']
+        gemini_path = file_path + '.diarization.gemini.json'
+
+        if os.path.exists(gemini_path):
+            return send_file(gemini_path, as_attachment=True)
+
+        return "Gemini diarization file not found", 404
 
 
 @app.route('/api/recordings/stale', methods=['GET'])
