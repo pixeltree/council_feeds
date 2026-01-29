@@ -26,7 +26,20 @@
         <div class="bg-white rounded-xl p-6 mb-5 shadow-lg flex flex-col md:flex-row justify-between items-start gap-4">
             <div class="flex-1">
                 <h1 class="text-gray-800 text-3xl font-bold mb-2">{{ recording.meeting_title }}</h1>
-                <p class="text-gray-600 text-sm">Recording ID: {{ recording.id }}</p>
+                <div class="text-gray-600 text-sm space-y-1">
+                    <p>Recording ID: {{ recording.id }}</p>
+                    {% if recording.meeting_id %}
+                    <p>Meeting ID: {{ recording.meeting_id }}</p>
+                    {% endif %}
+                    {% if recording.meeting_link %}
+                    <p>
+                        <span>Meeting Agenda: </span>
+                        <a href="{{ recording.meeting_link }}" target="_blank" class="text-indigo-600 hover:text-indigo-800 underline">
+                            View on Calgary.ca
+                        </a>
+                    </p>
+                    {% endif %}
+                </div>
             </div>
             <a href="/recordings" class="text-indigo-600 font-semibold px-4 py-2 rounded-lg hover:bg-gray-50 transition whitespace-nowrap">
                 ← Back to Recordings
@@ -109,6 +122,42 @@
                 <div class="text-red-600 text-sm">{{ recording.post_process_error }}</div>
             </div>
             {% endif %}
+        </div>
+
+        <!-- Speakers Card -->
+        <div id="speakers-card" class="bg-white rounded-xl p-6 mb-5 shadow-lg hidden">
+            <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
+                <h2 class="text-gray-800 text-2xl font-bold">🎤 Meeting Speakers</h2>
+                <button id="refresh-speakers-btn"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        onclick="fetchSpeakersFromAgenda()">
+                    <span id="refresh-speakers-text">🔄 Refresh Speakers</span>
+                    <span id="refresh-speakers-loading" class="hidden inline-flex items-center gap-2">
+                        <span class="loading"></span> Fetching...
+                    </span>
+                </button>
+            </div>
+            <div id="speakers-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <!-- Speakers will be loaded here -->
+            </div>
+        </div>
+
+        <!-- No Speakers Card (shown when no speakers available) -->
+        <div id="no-speakers-card" class="bg-white rounded-xl p-6 mb-5 shadow-lg hidden">
+            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">🎤 Meeting Speakers</h2>
+            <div class="text-center py-10 text-gray-500">
+                <div class="text-5xl mb-4">👥</div>
+                <p class="mb-4">No speaker information available yet</p>
+                <button id="fetch-speakers-btn"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                        onclick="fetchSpeakersFromAgenda()">
+                    <span id="fetch-speakers-text">🔍 Fetch Speakers from Agenda</span>
+                    <span id="fetch-speakers-loading" class="hidden inline-flex items-center gap-2">
+                        <span class="loading"></span> Fetching...
+                    </span>
+                </button>
+                <p class="text-sm text-gray-400 mt-4">This will extract speaker names from the meeting agenda</p>
+            </div>
         </div>
 
         <!-- Transcript Card -->
@@ -270,5 +319,124 @@
         </div>
         {% endif %}
     </div>
+
+    <script>
+        // Display speaker cards
+        function displaySpeakers(speakers) {
+            const speakersCard = document.getElementById('speakers-card');
+            const noSpeakersCard = document.getElementById('no-speakers-card');
+            const speakersContent = document.getElementById('speakers-content');
+
+            if (speakers && speakers.length > 0) {
+                // Clear content
+                speakersContent.innerHTML = '';
+
+                // Create speaker cards
+                speakers.forEach(speaker => {
+                    const speakerDiv = document.createElement('div');
+                    speakerDiv.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4';
+
+                    // Determine badge color based on confidence
+                    let badgeColor = 'bg-gray-100 text-gray-600';
+                    if (speaker.confidence === 'high') {
+                        badgeColor = 'bg-green-100 text-green-700';
+                    } else if (speaker.confidence === 'medium') {
+                        badgeColor = 'bg-yellow-100 text-yellow-700';
+                    }
+
+                    speakerDiv.innerHTML = `
+                        <div class="font-semibold text-gray-800 text-lg mb-1">${speaker.name}</div>
+                        <div class="flex gap-2 items-center flex-wrap">
+                            <span class="text-sm text-gray-600">${speaker.role}</span>
+                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold ${badgeColor}">
+                                ${speaker.confidence}
+                            </span>
+                        </div>
+                    `;
+
+                    speakersContent.appendChild(speakerDiv);
+                });
+
+                // Show speakers card, hide no speakers card
+                speakersCard.classList.remove('hidden');
+                noSpeakersCard.classList.add('hidden');
+            } else {
+                // Show no speakers card, hide speakers card
+                speakersCard.classList.add('hidden');
+                noSpeakersCard.classList.remove('hidden');
+            }
+        }
+
+        // Load speaker information
+        async function loadSpeakers() {
+            try {
+                const response = await fetch('/api/recordings/{{ recording.id }}/speakers');
+                const data = await response.json();
+
+                if (data.success) {
+                    displaySpeakers(data.speakers);
+                }
+            } catch (error) {
+                console.error('Error loading speakers:', error);
+                // Show no speakers card on error
+                document.getElementById('no-speakers-card').classList.remove('hidden');
+            }
+        }
+
+        // Fetch speakers from agenda
+        async function fetchSpeakersFromAgenda() {
+            const fetchBtn = document.getElementById('fetch-speakers-btn');
+            const fetchText = document.getElementById('fetch-speakers-text');
+            const fetchLoading = document.getElementById('fetch-speakers-loading');
+            const refreshBtn = document.getElementById('refresh-speakers-btn');
+            const refreshText = document.getElementById('refresh-speakers-text');
+            const refreshLoading = document.getElementById('refresh-speakers-loading');
+
+            // Disable buttons and show loading
+            if (fetchBtn) {
+                fetchBtn.disabled = true;
+                fetchText.classList.add('hidden');
+                fetchLoading.classList.remove('hidden');
+            }
+            if (refreshBtn) {
+                refreshBtn.disabled = true;
+                refreshText.classList.add('hidden');
+                refreshLoading.classList.remove('hidden');
+            }
+
+            try {
+                const response = await fetch('/api/recordings/{{ recording.id }}/speakers/fetch', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    // Display the fetched speakers
+                    displaySpeakers(data.speakers);
+                    alert(`✅ Successfully found ${data.speakers.length} speakers from meeting agenda!`);
+                } else {
+                    alert(`❌ ${data.error || 'Failed to fetch speakers'}`);
+                }
+            } catch (error) {
+                console.error('Error fetching speakers:', error);
+                alert('❌ Error fetching speakers from agenda');
+            } finally {
+                // Re-enable buttons and hide loading
+                if (fetchBtn) {
+                    fetchBtn.disabled = false;
+                    fetchText.classList.remove('hidden');
+                    fetchLoading.classList.add('hidden');
+                }
+                if (refreshBtn) {
+                    refreshBtn.disabled = false;
+                    refreshText.classList.remove('hidden');
+                    refreshLoading.classList.add('hidden');
+                }
+            }
+        }
+
+        // Load speakers on page load
+        loadSpeakers();
+    </script>
 </body>
 </html>

@@ -151,8 +151,21 @@ def recording_detail(recording_id):
     start_time = db.parse_datetime_from_db(recording['start_time']) if recording['start_time'] else None
     end_time = db.parse_datetime_from_db(recording['end_time']) if recording['end_time'] else None
 
+    # Get meeting link if available
+    meeting_link = None
+    meeting_id = recording.get('meeting_id')
+    if meeting_id:
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT link FROM meetings WHERE id = ?", (meeting_id,))
+            row = cursor.fetchone()
+            if row:
+                meeting_link = row['link']
+
     formatted_recording = {
         'id': recording['id'],
+        'meeting_id': meeting_id,
+        'meeting_link': meeting_link,
         'meeting_title': recording['meeting_title'] or 'Council Meeting',
         'start_time': start_time.strftime('%Y-%m-%d %H:%M') if start_time else 'Unknown',
         'end_time': end_time.strftime('%Y-%m-%d %H:%M') if end_time else None,
@@ -763,6 +776,81 @@ def api_get_transcription_status(recording_id):
         'progress': progress,
         'logs': logs
     })
+
+
+@app.route('/api/recordings/<int:recording_id>/speakers', methods=['GET'])
+def api_get_recording_speakers(recording_id):
+    """API endpoint to get speaker list for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    speakers = db.get_recording_speakers(recording_id)
+
+    return jsonify({
+        'success': True,
+        'speakers': speakers
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/speakers/fetch', methods=['POST'])
+def api_fetch_recording_speakers(recording_id):
+    """API endpoint to fetch speaker list from meeting agenda."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    # Get the meeting link
+    meeting_id = recording.get('meeting_id')
+    if not meeting_id:
+        return jsonify({'success': False, 'error': 'No meeting associated with this recording'}), 400
+
+    # Get meeting details
+    meeting = db.get_upcoming_meetings(limit=1000)  # Get all meetings
+    meeting_link = None
+    for m in meeting:
+        if m['id'] == meeting_id:
+            meeting_link = m.get('link')
+            break
+
+    # Also check past meetings
+    if not meeting_link:
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT link FROM meetings WHERE id = ?", (meeting_id,))
+            row = cursor.fetchone()
+            if row:
+                meeting_link = row['link']
+
+    if not meeting_link:
+        return jsonify({'success': False, 'error': 'No meeting agenda link available'}), 400
+
+    try:
+        # Extract speakers from agenda
+        import agenda_parser
+        speakers = agenda_parser.extract_speakers(meeting_link)
+
+        if speakers:
+            # Save to database
+            db.update_recording_speakers(recording_id, speakers)
+            return jsonify({
+                'success': True,
+                'message': f'Found {len(speakers)} speakers from meeting agenda',
+                'speakers': speakers
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No speakers found in the meeting agenda'
+            }), 404
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to fetch speakers: {str(e)}'
+        }), 500
 
 
 def run_server(host=None, port=None):

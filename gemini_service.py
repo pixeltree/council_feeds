@@ -77,6 +77,12 @@ def refine_diarization(
         # Construct the prompt
         prompt = _construct_prompt(pyannote_json, expected_speakers, meeting_title)
 
+        # Log the prompt for debugging
+        print(f"[GEMINI] Prompt being sent to API:")
+        print("=" * 80)
+        print(prompt)
+        print("=" * 80)
+
         # Call the API with timeout
         # Note: google-generativeai doesn't support direct timeout parameter in generate_content
         # We use request_options to set timeout at the HTTP level
@@ -88,6 +94,14 @@ def refine_diarization(
             generation_config={'temperature': 0.1},  # Low temperature for consistency
             request_options=request_options
         )
+
+        # Log the raw response for debugging
+        print(f"[GEMINI] Raw response from API:")
+        print("=" * 80)
+        print(response.text[:2000])  # First 2000 chars to avoid too much output
+        if len(response.text) > 2000:
+            print(f"... (truncated, total length: {len(response.text)} chars)")
+        print("=" * 80)
 
         # Extract JSON from response
         refined_json = _extract_json_from_response(response.text)

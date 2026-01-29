@@ -588,6 +588,8 @@ class TranscriptionService:
                                     f'{prefix}Found {len(expected_speakers)} expected speakers from agenda',
                                     'info'
                                 )
+                                # Save speaker list to database
+                                db.update_recording_speakers(recording_id, expected_speakers)
                         else:
                             print("[TRANSCRIPTION] No speakers found in agenda, will use context only")
                             if recording_id:

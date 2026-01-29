@@ -65,7 +65,7 @@ class TestAgendaParser:
         mock_response.text = SAMPLE_COUNCIL_HTML
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Should find mayor, councillors, and presenters
         assert len(speakers) >= 4
@@ -84,7 +84,7 @@ class TestAgendaParser:
         mock_response.text = SAMPLE_COUNCIL_HTML
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Find mayor and councillors
         mayors = [s for s in speakers if s['role'] == 'Mayor']
@@ -102,7 +102,7 @@ class TestAgendaParser:
         mock_response.text = SAMPLE_COUNCIL_HTML
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Find presenters
         presenters = [s for s in speakers if s['role'] == 'Presenter']
@@ -120,7 +120,7 @@ class TestAgendaParser:
         mock_response.text = SAMPLE_PUBLIC_HEARING_HTML
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Find delegations
         delegations = [s for s in speakers if s['role'] == 'Delegation']
@@ -138,7 +138,7 @@ class TestAgendaParser:
         mock_response.text = MALFORMED_HTML
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Should handle gracefully and return empty list or partial results
         assert isinstance(speakers, list)
@@ -149,7 +149,7 @@ class TestAgendaParser:
         """Test that network timeout returns empty list."""
         mock_get.side_effect = requests.Timeout("Connection timed out")
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         assert speakers == []
 
@@ -158,7 +158,7 @@ class TestAgendaParser:
         """Test that network errors return empty list."""
         mock_get.side_effect = requests.RequestException("Network error")
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         assert speakers == []
 
@@ -186,7 +186,7 @@ class TestAgendaParser:
         mock_response.text = html_with_duplicates
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Should only have one entry for Jyoti Gondek (prefers higher confidence)
         gondek_entries = [s for s in speakers if 'Gondek' in s['name']]
@@ -208,7 +208,7 @@ class TestAgendaParser:
         mock_response.text = html_with_case_variants
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         # Should only have one entry (case-insensitive)
         smith_entries = [s for s in speakers if 'smith' in s['name'].lower()]
@@ -222,7 +222,7 @@ class TestAgendaParser:
         mock_response.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         assert speakers == []
 
@@ -234,7 +234,7 @@ class TestAgendaParser:
         mock_response.text = EMPTY_HTML
         mock_get.return_value = mock_response
 
-        speakers = agenda_parser.extract_speakers('https://example.com/agenda')
+        speakers = agenda_parser.extract_speakers('https://example.com/agenda', use_gemini=False)
 
         assert speakers == []
         captured = capfd.readouterr()
