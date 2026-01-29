@@ -10,7 +10,9 @@ from typing import List, Dict, Optional
 import json
 
 
-def extract_speakers(agenda_url: Optional[str], timeout: int = 10) -> List[Dict[str, str]]:
+def extract_speakers(
+    agenda_url: Optional[str], timeout: int = 10
+) -> List[Dict[str, str]]:
     """
     Extract speaker names from a meeting agenda HTML page using Gemini AI.
 
@@ -36,11 +38,12 @@ def extract_speakers(agenda_url: Optional[str], timeout: int = 10) -> List[Dict[
         response.raise_for_status()
 
         # Parse HTML
-        soup = BeautifulSoup(response.text, 'html.parser')
+        soup = BeautifulSoup(response.text, "html.parser")
 
         # Use Gemini AI extraction
         try:
             from config import GEMINI_API_KEY
+
             if GEMINI_API_KEY:
                 print("[AGENDA] Attempting Gemini AI extraction")
                 speakers = _extract_speakers_with_gemini(soup, GEMINI_API_KEY)
@@ -71,7 +74,9 @@ def extract_speakers(agenda_url: Optional[str], timeout: int = 10) -> List[Dict[
         return []
 
 
-def _extract_speakers_with_gemini(soup: BeautifulSoup, api_key: str) -> List[Dict[str, str]]:
+def _extract_speakers_with_gemini(
+    soup: BeautifulSoup, api_key: str
+) -> List[Dict[str, str]]:
     """
     Use Gemini AI to extract speakers from HTML content via REST API.
 
@@ -124,13 +129,8 @@ If no members are found, return an empty array: []
         url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={api_key}"
 
         payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }],
-            "generationConfig": {
-                "temperature": 0.1,
-                "maxOutputTokens": 2048
-            }
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2048},
         }
 
         response = requests.post(url, json=payload, timeout=30)
@@ -139,10 +139,10 @@ If no members are found, return an empty array: []
         result = response.json()
 
         # Extract text from response
-        if 'candidates' in result and len(result['candidates']) > 0:
-            candidate = result['candidates'][0]
-            if 'content' in candidate and 'parts' in candidate['content']:
-                response_text = candidate['content']['parts'][0]['text'].strip()
+        if "candidates" in result and len(result["candidates"]) > 0:
+            candidate = result["candidates"][0]
+            if "content" in candidate and "parts" in candidate["content"]:
+                response_text = candidate["content"]["parts"][0]["text"].strip()
             else:
                 print("[AGENDA] Unexpected Gemini response structure")
                 return []
@@ -151,17 +151,17 @@ If no members are found, return an empty array: []
             return []
 
         # Remove markdown code blocks if present
-        if response_text.startswith('```'):
-            lines = response_text.split('\n')
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
             json_lines = []
             in_code_block = False
             for line in lines:
-                if line.startswith('```'):
+                if line.startswith("```"):
                     in_code_block = not in_code_block
                     continue
-                if in_code_block or (not line.startswith('```')):
+                if in_code_block or (not line.startswith("```")):
                     json_lines.append(line)
-            response_text = '\n'.join(json_lines)
+            response_text = "\n".join(json_lines)
 
         # Parse JSON
         speakers = json.loads(response_text)
@@ -174,9 +174,9 @@ If no members are found, return an empty array: []
         # Validate each speaker has required fields
         valid_speakers = []
         for speaker in speakers:
-            if isinstance(speaker, dict) and 'name' in speaker and 'role' in speaker:
-                if 'confidence' not in speaker:
-                    speaker['confidence'] = 'high'
+            if isinstance(speaker, dict) and "name" in speaker and "role" in speaker:
+                if "confidence" not in speaker:
+                    speaker["confidence"] = "high"
                 valid_speakers.append(speaker)
 
         return valid_speakers
