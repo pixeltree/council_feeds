@@ -481,9 +481,9 @@ def download_recording_diarization_gemini(recording_id):
 @app.route('/download/diarization/segment/<int:segment_id>')
 def download_segment_diarization(segment_id):
     """Download diarization data for a segment (prefers Gemini, falls back to pyannote)."""
-    segments = db.get_db_connection()
+    conn = db.get_db_connection()
 
-    with segments as conn:
+    with conn:
         cursor = conn.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
@@ -514,9 +514,9 @@ def download_segment_diarization(segment_id):
 @app.route('/download/diarization/pyannote/segment/<int:segment_id>')
 def download_segment_diarization_pyannote(segment_id):
     """Download pyannote diarization data for a segment."""
-    segments = db.get_db_connection()
+    conn = db.get_db_connection()
 
-    with segments as conn:
+    with conn:
         cursor = conn.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
@@ -536,9 +536,9 @@ def download_segment_diarization_pyannote(segment_id):
 @app.route('/download/diarization/gemini/segment/<int:segment_id>')
 def download_segment_diarization_gemini(segment_id):
     """Download Gemini-refined diarization data for a segment."""
-    segments = db.get_db_connection()
+    conn = db.get_db_connection()
 
-    with segments as conn:
+    with conn:
         cursor = conn.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()

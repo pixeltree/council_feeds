@@ -344,15 +344,27 @@
                         badgeColor = 'bg-yellow-100 text-yellow-700';
                     }
 
-                    speakerDiv.innerHTML = `
-                        <div class="font-semibold text-gray-800 text-lg mb-1">${speaker.name}</div>
-                        <div class="flex gap-2 items-center flex-wrap">
-                            <span class="text-sm text-gray-600">${speaker.role}</span>
-                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold ${badgeColor}">
-                                ${speaker.confidence}
-                            </span>
-                        </div>
-                    `;
+                    // Create elements safely to prevent XSS
+                    const nameDiv = document.createElement('div');
+                    nameDiv.className = 'font-semibold text-gray-800 text-lg mb-1';
+                    nameDiv.textContent = speaker.name;
+
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'flex gap-2 items-center flex-wrap';
+
+                    const roleSpan = document.createElement('span');
+                    roleSpan.className = 'text-sm text-gray-600';
+                    roleSpan.textContent = speaker.role;
+
+                    const confidenceSpan = document.createElement('span');
+                    confidenceSpan.className = `px-2 py-0.5 rounded-full text-xs font-semibold ${badgeColor}`;
+                    confidenceSpan.textContent = speaker.confidence;
+
+                    infoDiv.appendChild(roleSpan);
+                    infoDiv.appendChild(confidenceSpan);
+
+                    speakerDiv.appendChild(nameDiv);
+                    speakerDiv.appendChild(infoDiv);
 
                     speakersContent.appendChild(speakerDiv);
                 });

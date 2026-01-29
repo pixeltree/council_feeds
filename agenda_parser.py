@@ -34,7 +34,8 @@ def extract_speakers(
 
     try:
         # Fetch the HTML page with timeout
-        response = requests.get(agenda_url, timeout=timeout, verify=False)
+        # SSL verification enabled for security
+        response = requests.get(agenda_url, timeout=timeout)
         response.raise_for_status()
 
         # Parse HTML
@@ -42,11 +43,12 @@ def extract_speakers(
 
         # Use Gemini AI extraction
         try:
-            from config import GEMINI_API_KEY
+            from config import GEMINI_API_KEY, GEMINI_MODEL
 
             if GEMINI_API_KEY:
                 print("[AGENDA] Attempting Gemini AI extraction")
-                speakers = _extract_speakers_with_gemini(soup, GEMINI_API_KEY)
+                model = GEMINI_MODEL if 'GEMINI_MODEL' in dir() else "gemini-2.5-flash"
+                speakers = _extract_speakers_with_gemini(soup, GEMINI_API_KEY, model)
                 if speakers:
                     print(f"[AGENDA] Gemini AI found {len(speakers)} speakers")
                     return speakers
@@ -75,7 +77,7 @@ def extract_speakers(
 
 
 def _extract_speakers_with_gemini(
-    soup: BeautifulSoup, api_key: str
+    soup: BeautifulSoup, api_key: str, model: str = "gemini-2.5-flash"
 ) -> List[Dict[str, str]]:
     """
     Use Gemini AI to extract speakers from HTML content via REST API.
@@ -83,6 +85,7 @@ def _extract_speakers_with_gemini(
     Args:
         soup: BeautifulSoup parsed HTML
         api_key: Gemini API key
+        model: Gemini model to use (default: gemini-2.5-flash)
 
     Returns:
         List of speaker dictionaries or empty list on failure
@@ -125,8 +128,8 @@ Return ONLY a JSON array with this exact format (no markdown, no explanation, no
 If no members are found, return an empty array: []
 """
 
-        # Use REST API directly with gemini-2.5-flash model
-        url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key={api_key}"
+        # Use REST API directly with configured model
+        url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
 
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],

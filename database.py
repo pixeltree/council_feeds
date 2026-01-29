@@ -1154,7 +1154,7 @@ def get_recording_speakers(recording_id: int) -> List[Dict[str, str]]:
         if row and row['speakers']:
             try:
                 return json.loads(row['speakers'])
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 return []
 
         return []
