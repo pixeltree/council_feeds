@@ -33,7 +33,7 @@ from config import (
     AUDIO_DETECTION_MAX_THRESHOLD_DB,
     ENABLE_TRANSCRIPTION,
     WHISPER_MODEL,
-    HUGGINGFACE_TOKEN,
+    PYANNOTE_API_TOKEN,
     RECORDING_FORMAT,
     ENABLE_SEGMENTED_RECORDING,
     SEGMENT_DURATION,
@@ -667,7 +667,7 @@ class RecordingService:
                     from transcription_service import TranscriptionService
                     transcriber = TranscriptionService(
                         whisper_model=WHISPER_MODEL,
-                        hf_token=HUGGINGFACE_TOKEN
+                        pyannote_api_token=PYANNOTE_API_TOKEN
                     )
 
                     # Transcribe the video

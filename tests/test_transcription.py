@@ -15,17 +15,16 @@ class TestTranscriptionService:
 
     def test_init_cpu_device(self):
         """Test initialization with CPU device."""
-        with patch('transcription_service.torch.cuda.is_available', return_value=False):
-            service = TranscriptionService(whisper_model="base", hf_token="test_token")
+        with patch('torch.cuda.is_available', return_value=False):
+            service = TranscriptionService(whisper_model="base", pyannote_api_token="test_token")
             assert service.whisper_model_name == "base"
-            assert service.hf_token == "test_token"
+            assert service.pyannote_api_token == "test_token"
             assert service.device == "cpu"
             assert service._whisper_model is None
-            assert service._diarization_pipeline is None
 
     def test_init_cuda_device(self):
         """Test initialization with CUDA device."""
-        with patch('transcription_service.torch.cuda.is_available', return_value=True):
+        with patch('torch.cuda.is_available', return_value=True):
             service = TranscriptionService()
             assert service.device == "cuda"
 
@@ -52,30 +51,35 @@ class TestTranscriptionService:
         assert model2 == mock_model
         assert mock_whisper_model.call_count == 1  # Not called again
 
-    def test_load_diarization_pipeline_no_token(self):
-        """Test diarization pipeline fails without token."""
-        service = TranscriptionService(hf_token=None)
+    def test_perform_diarization_no_token(self):
+        """Test diarization fails without API token."""
+        service = TranscriptionService(pyannote_api_token=None)
 
-        with pytest.raises(ValueError, match="HuggingFace token required"):
-            service._load_diarization_pipeline()
+        with pytest.raises(ValueError, match="pyannote.ai API token required"):
+            service.perform_diarization('/fake/audio.wav')
 
-    @patch('transcription_service.Pipeline.from_pretrained')
-    @patch.dict('os.environ', {}, clear=True)
-    def test_load_diarization_pipeline_cpu(self, mock_pipeline):
-        """Test lazy loading of diarization pipeline on CPU."""
-        mock_pipe = Mock()
-        mock_pipeline.return_value = mock_pipe
+    @patch('builtins.open', mock_open(read_data=b'fake audio data'))
+    @patch('requests.post')
+    def test_perform_diarization_api_success(self, mock_post):
+        """Test diarization via API."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'segments': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_post.return_value = mock_response
 
-        service = TranscriptionService(hf_token="test_token", device="cpu")
+        service = TranscriptionService(pyannote_api_token="test_token", device="cpu")
 
-        pipeline = service._load_diarization_pipeline()
-        assert pipeline == mock_pipe
-        # Token is now set via environment variable, not passed as parameter
-        mock_pipeline.assert_called_once_with(
-            "pyannote/speaker-diarization-3.1"
-        )
-        # Verify token was set in environment
-        assert os.environ.get('HF_TOKEN') == 'test_token'
+        segments = service.perform_diarization('/fake/audio.wav')
+
+        assert len(segments) == 1
+        assert segments[0]['start'] == 0.0
+        assert segments[0]['end'] == 10.0
+        assert segments[0]['speaker'] == 'SPEAKER_00'
+        mock_post.assert_called_once()
 
     def test_merge_transcription_and_diarization(self):
         """Test merging transcription with diarization."""
@@ -172,7 +176,7 @@ class TestTranscriptionService:
 
     @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
-    @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
+    @patch('requests.post')
     @patch('os.path.exists')
     def test_transcribe_with_speakers_success(self, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
         """Test complete transcription pipeline."""
@@ -192,18 +196,17 @@ class TestTranscriptionService:
         mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
-        # Mock diarization pipeline
-        mock_dia = Mock()
-        mock_dia_result = Mock()
-        mock_annotation = Mock()
-        mock_annotation.itertracks.return_value = [
-            (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
-        ]
-        mock_dia_result.speaker_diarization = mock_annotation
-        mock_dia.return_value = mock_dia_result
-        mock_load_dia.return_value = mock_dia
+        # Mock API response for diarization
+        mock_api_response = Mock()
+        mock_api_response.status_code = 200
+        mock_api_response.json.return_value = {
+            'segments': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_load_dia.return_value = mock_api_response
 
-        service = TranscriptionService(hf_token="test_token")
+        service = TranscriptionService(pyannote_api_token="test_token")
 
         # Test without saving to file
         with patch('builtins.open', mock_open()), \
@@ -290,7 +293,7 @@ class TestTranscriptionService:
 
     @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
-    @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
+    @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
     def test_transcribe_with_speakers_extracts_audio_once(self, mock_remove, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
@@ -322,18 +325,17 @@ class TestTranscriptionService:
         mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
-        # Mock diarization pipeline
-        mock_dia = Mock()
-        mock_dia_result = Mock()
-        mock_annotation = Mock()
-        mock_annotation.itertracks.return_value = [
-            (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
-        ]
-        mock_dia_result.speaker_diarization = mock_annotation
-        mock_dia.return_value = mock_dia_result
-        mock_load_dia.return_value = mock_dia
+        # Mock API response for diarization
+        mock_api_response = Mock()
+        mock_api_response.status_code = 200
+        mock_api_response.json.return_value = {
+            'segments': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_load_dia.return_value = mock_api_response
 
-        service = TranscriptionService(hf_token="test_token")
+        service = TranscriptionService(pyannote_api_token="test_token")
 
         with patch('builtins.open', mock_open()):
             result = service.transcribe_with_speakers(
@@ -347,12 +349,10 @@ class TestTranscriptionService:
 
         # Verify both Whisper and diarization used the extracted audio
         mock_whisper.transcribe.assert_called_once()
-        mock_dia.assert_called_once()
+        mock_load_dia.assert_called_once()
 
         # Verify the same audio path was used for both
         whisper_audio_path = mock_whisper.transcribe.call_args[0][0]
-        dia_audio_path = mock_dia.call_args[0][0]
-        assert whisper_audio_path == dia_audio_path, "Both should use the same extracted audio file"
         assert whisper_audio_path == '/fake/video.wav', "Should use persistent WAV file"
 
         # Verify WAV file was cleaned up after successful transcription
@@ -364,7 +364,7 @@ class TestTranscriptionService:
 
     @patch('subprocess.run')
     @patch('transcription_service.TranscriptionService._load_whisper_model')
-    @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
+    @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
     def test_transcribe_with_speakers_resumes_after_failure(self, mock_remove, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
@@ -384,18 +384,17 @@ class TestTranscriptionService:
         mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
         mock_load_whisper.return_value = mock_whisper
 
-        # Mock diarization pipeline
-        mock_dia = Mock()
-        mock_dia_result = Mock()
-        mock_annotation = Mock()
-        mock_annotation.itertracks.return_value = [
-            (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
-        ]
-        mock_dia_result.speaker_diarization = mock_annotation
-        mock_dia.return_value = mock_dia_result
-        mock_load_dia.return_value = mock_dia
+        # Mock API response for diarization
+        mock_api_response = Mock()
+        mock_api_response.status_code = 200
+        mock_api_response.json.return_value = {
+            'segments': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_load_dia.return_value = mock_api_response
 
-        service = TranscriptionService(hf_token="test_token")
+        service = TranscriptionService(pyannote_api_token="test_token")
 
         with patch('builtins.open', mock_open()):
             result = service.transcribe_with_speakers(
@@ -408,7 +407,7 @@ class TestTranscriptionService:
 
         # Verify both Whisper and diarization still worked
         mock_whisper.transcribe.assert_called_once()
-        mock_dia.assert_called_once()
+        mock_load_dia.assert_called_once()
 
         # Verify WAV file was cleaned up after successful transcription
         mock_remove.assert_called_once_with('/fake/video.wav')
@@ -417,32 +416,32 @@ class TestTranscriptionService:
         assert result['file'] == '/fake/video.mp4'
         assert result['num_speakers'] == 1
 
+    @patch('builtins.open', mock_open(read_data=b'fake audio data'))
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
+    @patch('requests.post')
     @patch('os.path.exists')
     def test_perform_diarization_accepts_wav_directly(self, mock_exists, mock_load_dia, mock_subprocess):
         """Test that perform_diarization accepts WAV files directly without conversion."""
         mock_exists.return_value = True
 
-        # Mock diarization pipeline
-        mock_dia = Mock()
-        mock_dia_result = Mock()
-        mock_annotation = Mock()
-        mock_annotation.itertracks.return_value = [
-            (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
-        ]
-        mock_dia_result.speaker_diarization = mock_annotation
-        mock_dia.return_value = mock_dia_result
-        mock_load_dia.return_value = mock_dia
+        # Mock API response for diarization
+        mock_api_response = Mock()
+        mock_api_response.status_code = 200
+        mock_api_response.json.return_value = {
+            'segments': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_load_dia.return_value = mock_api_response
 
-        service = TranscriptionService(hf_token="test_token")
+        service = TranscriptionService(pyannote_api_token="test_token")
         segments = service.perform_diarization('/fake/audio.wav')
 
         # Verify no subprocess (ffmpeg) was called since it's already WAV
         mock_subprocess.assert_not_called()
 
-        # Verify diarization was performed
-        mock_dia.assert_called_once_with('/fake/audio.wav')
+        # Verify diarization API was called
+        mock_load_dia.assert_called_once()
         assert len(segments) == 1
         assert segments[0]['speaker'] == 'SPEAKER_00'
 

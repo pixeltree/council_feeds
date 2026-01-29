@@ -367,6 +367,49 @@ def download_segment_transcript(segment_id):
         return send_file(transcript_path, as_attachment=True)
 
 
+@app.route('/download/diarization/<int:recording_id>')
+def download_recording_diarization(recording_id):
+    """Download diarization data (with confidence scores) for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    # Diarization file is saved alongside transcript
+    file_path = recording.get('file_path')
+    if not file_path:
+        return "Recording file path not found", 404
+
+    diarization_path = file_path + '.diarization.json'
+
+    if not os.path.exists(diarization_path):
+        return "Diarization file not found", 404
+
+    return send_file(diarization_path, as_attachment=True)
+
+
+@app.route('/download/diarization/segment/<int:segment_id>')
+def download_segment_diarization(segment_id):
+    """Download diarization data (with confidence scores) for a segment."""
+    segments = db.get_db_connection()
+
+    with segments as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+
+        if not row or not row['file_path']:
+            return "Segment not found", 404
+
+        file_path = row['file_path']
+        diarization_path = file_path + '.diarization.json'
+
+        if not os.path.exists(diarization_path):
+            return "Diarization file not found", 404
+
+        return send_file(diarization_path, as_attachment=True)
+
+
 @app.route('/api/recordings/stale', methods=['GET'])
 def api_get_stale_recordings():
     """API endpoint to get all stale recordings."""
@@ -458,7 +501,7 @@ def api_transcribe_recording(recording_id):
     # Run transcription in background thread
     def run_transcription():
         from transcription_service import TranscriptionService
-        from config import HUGGINGFACE_TOKEN, ENABLE_TRANSCRIPTION
+        from config import PYANNOTE_API_TOKEN, ENABLE_TRANSCRIPTION
 
         if not ENABLE_TRANSCRIPTION:
             db.update_transcription_status(recording_id, 'skipped', 'Transcription disabled in config')
@@ -470,7 +513,7 @@ def api_transcribe_recording(recording_id):
             db.add_transcription_log(recording_id, 'Starting transcription process', 'info')
             db.add_recording_log(recording_id, 'Starting transcription process', 'info')
 
-            transcription_service = TranscriptionService(hf_token=HUGGINGFACE_TOKEN)
+            transcription_service = TranscriptionService(pyannote_api_token=PYANNOTE_API_TOKEN)
 
             # Check if recording has segments
             segments = db.get_segments_by_recording(recording_id)

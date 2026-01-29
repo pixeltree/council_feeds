@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Transcription service for Calgary Council Stream Recorder.
-Uses Whisper for speech-to-text and pyannote.audio for speaker diarization.
+Uses Whisper for speech-to-text and pyannote.ai API for speaker diarization.
 """
 
 import os
+import requests
 from faster_whisper import WhisperModel
-import torch
-from pyannote.audio import Pipeline
 from typing import Dict, List, Optional
 from datetime import timedelta
 import json
+import time
 
 
 class TranscriptionService:
@@ -19,7 +19,7 @@ class TranscriptionService:
     def __init__(
         self,
         whisper_model: str = "base",
-        hf_token: Optional[str] = None,
+        pyannote_api_token: Optional[str] = None,
         device: Optional[str] = None
     ):
         """
@@ -27,24 +27,28 @@ class TranscriptionService:
 
         Args:
             whisper_model: Whisper model size (tiny, base, small, medium, large)
-            hf_token: HuggingFace token for pyannote.audio (required for diarization)
-            device: Device to use ('cpu', 'cuda', or None for auto-detect)
+            pyannote_api_token: pyannote.ai API token (required for diarization)
+            device: Device to use for Whisper ('cpu', 'cuda', or None for auto-detect)
         """
         self.whisper_model_name = whisper_model
-        self.hf_token = hf_token
+        self.pyannote_api_token = pyannote_api_token
+        self.pyannote_api_url = "https://api.pyannote.ai/v1/diarize"
 
-        # Determine device
+        # Determine device for Whisper only
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            try:
+                import torch
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                self.device = "cpu"
         else:
             self.device = device
 
-        print(f"[TRANSCRIPTION] Using device: {self.device}")
+        print(f"[TRANSCRIPTION] Using device for Whisper: {self.device}")
         self._last_recording_id = None  # Track last recording ID for logging
 
-        # Lazy load models (only when needed)
+        # Lazy load Whisper model (only when needed)
         self._whisper_model = None
-        self._diarization_pipeline = None
 
     def _load_whisper_model(self):
         """Lazy load Whisper model."""
@@ -59,29 +63,6 @@ class TranscriptionService:
             )
         return self._whisper_model
 
-    def _load_diarization_pipeline(self):
-        """Lazy load pyannote diarization pipeline."""
-        if self._diarization_pipeline is None:
-            if not self.hf_token:
-                raise ValueError(
-                    "HuggingFace token required for speaker diarization. "
-                    "Get one at https://huggingface.co/settings/tokens and "
-                    "accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1"
-                )
-
-            print("[TRANSCRIPTION] Loading speaker diarization pipeline...")
-            # Set HF_TOKEN environment variable - newer huggingface_hub reads this automatically
-            # This avoids parameter name conflicts between pyannote and huggingface_hub versions
-            os.environ['HF_TOKEN'] = self.hf_token
-            self._diarization_pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1"
-            )
-
-            # Move to appropriate device
-            if self.device == "cuda":
-                self._diarization_pipeline.to(torch.device("cuda"))
-
-        return self._diarization_pipeline
 
     def transcribe_audio(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> Dict:
         """
@@ -194,7 +175,7 @@ class TranscriptionService:
 
     def perform_diarization(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> List[Dict]:
         """
-        Perform speaker diarization on audio file.
+        Perform speaker diarization using pyannote.ai API.
 
         Args:
             audio_path: Path to audio/video file (preferably WAV)
@@ -204,33 +185,153 @@ class TranscriptionService:
         Returns:
             List of speaker segments with start time, end time, and speaker label
         """
-        pipeline = self._load_diarization_pipeline()
+        if not self.pyannote_api_token:
+            raise ValueError(
+                "pyannote.ai API token required for speaker diarization. "
+                "Get one at https://www.pyannote.ai/"
+            )
 
-        msg = f"Performing speaker diarization: {audio_path}"
+        msg = f"Performing speaker diarization via API: {audio_path}"
         print(f"[TRANSCRIPTION] {msg}")
 
         if recording_id:
             import database as db
             prefix = f"Segment {segment_number}: " if segment_number else ""
-            db.add_transcription_log(recording_id, f'{prefix}Starting speaker diarization (this may take 5-10 minutes on CPU)', 'info')
+            db.add_transcription_log(recording_id, f'{prefix}Starting speaker diarization via pyannote.ai API', 'info')
             db.add_recording_log(recording_id, f'{prefix}Starting speaker diarization', 'info')
 
-        diarization = pipeline(audio_path)
+        headers = {
+            "Authorization": f"Bearer {self.pyannote_api_token}",
+            "Content-Type": "application/json"
+        }
+
+        # Step 1: Create a pre-signed URL for upload
+        filename = os.path.basename(audio_path)
+        media_key = f"{int(time.time())}_{filename}"
+        media_url = f"media://{media_key}"
+
+        msg = "Preparing to upload audio file to pyannote.ai"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        upload_response = requests.post(
+            "https://api.pyannote.ai/v1/media/input",
+            headers=headers,
+            json={"url": media_url}
+        )
+
+        if upload_response.status_code not in [200, 201]:
+            error_msg = f"Failed to create upload URL: {upload_response.status_code}: {upload_response.text}"
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+            raise Exception(error_msg)
+
+        upload_data = upload_response.json()
+        presigned_url = upload_data.get('url')  # Response has 'url' not 'presigned_url'
+
+        # Step 2: Upload the audio file to the pre-signed URL
+        # Get file size for progress tracking
+        file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+        msg = f"Uploading audio file ({file_size_mb:.1f} MB) to pyannote.ai"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        with open(audio_path, 'rb') as audio_file:
+            upload_file_response = requests.put(
+                presigned_url,
+                data=audio_file
+            )
+
+        if upload_file_response.status_code not in [200, 204]:
+            error_msg = f"Failed to upload file: {upload_file_response.status_code}"
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+            raise Exception(error_msg)
+
+        msg = "Audio file uploaded successfully"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        # Step 3: Submit diarization job with the media URL
+        msg = "Submitting diarization job to pyannote.ai"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        response = requests.post(
+            self.pyannote_api_url,
+            headers=headers,
+            json={"url": media_url}
+        )
+
+        if response.status_code != 200:
+            error_msg = f"API request failed with status {response.status_code}: {response.text}"
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+            raise Exception(error_msg)
+
+        result = response.json()
+
+        # Check if job is async (requires polling)
+        job_id = result.get('jobId')
+        if job_id:
+            msg = f"Diarization job started (Job ID: {job_id}). Processing audio..."
+            print(f"[TRANSCRIPTION] {msg}")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+            # Poll for completion
+            job_url = f"https://api.pyannote.ai/v1/jobs/{job_id}"
+            last_status = None
+            while True:
+                time.sleep(5)  # Poll every 5 seconds
+                job_response = requests.get(job_url, headers=headers)
+                job_data = job_response.json()
+
+                status = job_data.get('status')
+
+                # Log status changes
+                if status != last_status:
+                    msg = f"Diarization job status: {status}"
+                    print(f"[TRANSCRIPTION] {msg}")
+                    if recording_id:
+                        db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+                    last_status = status
+
+                if status == 'succeeded':
+                    result = job_data.get('output', {})
+                    break
+                elif status == 'failed':
+                    error_msg = f"Diarization job failed: {job_data.get('error', 'Unknown error')}"
+                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    if recording_id:
+                        db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+                    raise Exception(error_msg)
 
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
             db.add_recording_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
 
-        # Convert to list of segments
+        # Convert API response to list of segments
+        # pyannote.ai returns diarization in format: {"diarization": [{"start": ..., "end": ..., "speaker": ..., "confidence": ...}]}
         segments = []
-        # pyannote.audio 4.0+ changed API - DiarizeOutput.speaker_diarization returns Annotation
-        # Iterate directly over Annotation to get (segment, speaker) tuples
-        for segment, _, speaker in diarization.speaker_diarization.itertracks(yield_label=True):
-            segments.append({
-                'start': segment.start,
-                'end': segment.end,
-                'speaker': speaker
-            })
+        diarization_data = result.get('diarization', result.get('segments', []))
+        for segment_data in diarization_data:
+            segment = {
+                'start': segment_data['start'],
+                'end': segment_data['end'],
+                'speaker': segment_data['speaker']
+            }
+            # Include confidence score if available
+            if 'confidence' in segment_data:
+                segment['confidence'] = segment_data['confidence']
+            segments.append(segment)
 
         return segments
 
@@ -256,17 +357,22 @@ class TranscriptionService:
             seg_end = segment['end']
             seg_text = segment['text'].strip()
 
-            # Find overlapping speaker
-            speaker = self._find_speaker_for_segment(
+            # Find overlapping speaker (now returns tuple with confidence)
+            speaker_info = self._find_speaker_for_segment(
                 seg_start, seg_end, diarization_segments
             )
 
-            merged_segments.append({
+            merged_segment = {
                 'start': seg_start,
                 'end': seg_end,
                 'text': seg_text,
-                'speaker': speaker
-            })
+                'speaker': speaker_info['speaker']
+            }
+            # Include confidence if available
+            if 'confidence' in speaker_info:
+                merged_segment['speaker_confidence'] = speaker_info['confidence']
+
+            merged_segments.append(merged_segment)
 
         return merged_segments
 
@@ -275,7 +381,7 @@ class TranscriptionService:
         start: float,
         end: float,
         diarization_segments: List[Dict]
-    ) -> str:
+    ) -> Dict:
         """
         Find the speaker with the most overlap for a given time segment.
 
@@ -285,10 +391,10 @@ class TranscriptionService:
             diarization_segments: List of speaker segments
 
         Returns:
-            Speaker label with most overlap, or "UNKNOWN" if none found
+            Dictionary with speaker label and confidence (if available)
         """
         max_overlap = 0
-        best_speaker = "UNKNOWN"
+        best_speaker_info = {"speaker": "UNKNOWN"}
 
         for dia_seg in diarization_segments:
             # Calculate overlap
@@ -298,9 +404,12 @@ class TranscriptionService:
 
             if overlap > max_overlap:
                 max_overlap = overlap
-                best_speaker = dia_seg['speaker']
+                best_speaker_info = {"speaker": dia_seg['speaker']}
+                # Include confidence if available
+                if 'confidence' in dia_seg:
+                    best_speaker_info['confidence'] = dia_seg['confidence']
 
-        return best_speaker
+        return best_speaker_info
 
     def transcribe_with_speakers(
         self,
@@ -350,6 +459,17 @@ class TranscriptionService:
             db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
 
         diarization_segments = self.perform_diarization(audio_wav_path, recording_id=recording_id, segment_number=segment_number)
+
+        # Save raw diarization data for review (includes confidence scores)
+        if save_to_file:
+            diarization_output_path = video_path + '.diarization.json'
+            with open(diarization_output_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'file': video_path,
+                    'segments': diarization_segments,
+                    'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
+                }, f, indent=2, ensure_ascii=False)
+            print(f"[TRANSCRIPTION] Raw diarization data saved to: {diarization_output_path}")
 
         # Step 3: Merge results
         if recording_id:

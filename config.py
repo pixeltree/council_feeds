@@ -79,7 +79,7 @@ AUDIO_DETECTION_MAX_THRESHOLD_DB = -30  # Max volume threshold for detecting sil
 # Transcription settings
 ENABLE_TRANSCRIPTION = os.getenv("ENABLE_TRANSCRIPTION", "false").lower() == "true"
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # tiny, base, small, medium, large
-HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN", None)  # Required for speaker diarization
+PYANNOTE_API_TOKEN = os.getenv("PYANNOTE_API_TOKEN", None)  # Required for speaker diarization
 
 # Recording resilience settings
 RECORDING_FORMAT = os.getenv("RECORDING_FORMAT", "mkv")  # mkv (safest), mp4, or ts

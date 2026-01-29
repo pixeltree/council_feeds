@@ -115,14 +115,21 @@
         {% if recording.has_transcript %}
         <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
-                <h2 class="text-gray-800 text-2xl font-bold">📄 Transcript</h2>
-                <a href="/download/transcript/{{ recording.id }}"
-                   class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm">
-                    ⬇️ Download Transcript
-                </a>
+                <h2 class="text-gray-800 text-2xl font-bold">📄 Transcript & Diarization</h2>
+                <div class="flex gap-2">
+                    <a href="/download/transcript/{{ recording.id }}"
+                       class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm">
+                        ⬇️ Download Transcript
+                    </a>
+                    <a href="/download/diarization/{{ recording.id }}"
+                       class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm"
+                       title="Download diarization data with confidence scores">
+                        🎯 Download Diarization
+                    </a>
+                </div>
             </div>
             <div class="bg-gray-50 p-4 rounded-lg">
-                <p class="text-gray-600 text-sm">Full recording transcript available for download</p>
+                <p class="text-gray-600 text-sm">Full recording transcript and speaker diarization data (with confidence scores) available for download</p>
             </div>
         </div>
         {% endif %}
@@ -176,10 +183,17 @@
                             </div>
                         </div>
                         {% if segment.has_transcript and segment.transcript_path %}
-                            <a href="/download/transcript/segment/{{ segment.id }}"
-                               class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm whitespace-nowrap">
-                                📄 Download Transcript
-                            </a>
+                            <div class="flex gap-2">
+                                <a href="/download/transcript/segment/{{ segment.id }}"
+                                   class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm whitespace-nowrap">
+                                    📄 Download Transcript
+                                </a>
+                                <a href="/download/diarization/segment/{{ segment.id }}"
+                                   class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm whitespace-nowrap"
+                                   title="Download diarization data with confidence scores">
+                                    🎯 Download Diarization
+                                </a>
+                            </div>
                         {% endif %}
                     </div>
                 </div>
