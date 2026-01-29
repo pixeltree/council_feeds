@@ -768,13 +768,167 @@ def api_get_transcription_status(recording_id):
         except:
             logs = []
 
+    # Get step-level status from file detection
+    from transcription_progress import detect_transcription_progress, get_overall_status
+    file_path = recording.get('file_path')
+    steps = detect_transcription_progress(file_path) if file_path else {}
+
+    # Use file-based overall status, but merge DB failure status
+    # (files are the source of truth, but we need to preserve failure state)
+    if steps:
+        overall_status = get_overall_status(steps)
+        # If no steps completed but DB shows failed, preserve the failure
+        completed_count = sum(1 for step in steps.values() if step.get('status') == 'completed')
+        if completed_count == 0 and recording.get('transcription_status') == 'failed':
+            overall_status = 'failed'
+    else:
+        overall_status = recording.get('transcription_status', 'pending')
+
     return jsonify({
         'success': True,
-        'status': recording.get('transcription_status', 'pending'),
+        'status': overall_status,  # Use file-based status
         'error': recording.get('transcription_error'),
         'attempted_at': recording.get('transcription_attempted_at'),
         'progress': progress,
-        'logs': logs
+        'logs': logs,
+        'steps': steps  # Add step-level information from file detection
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/transcription-status/reset', methods=['POST'])
+def api_reset_transcription_status(recording_id):
+    """API endpoint to reset transcription status to pending."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    try:
+        db.update_transcription_status(recording_id, 'pending', None)
+        db.add_transcription_log(recording_id, 'Transcription status manually reset to pending', 'info')
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/recordings/<int:recording_id>/transcription/reset-step', methods=['POST'])
+def api_reset_transcription_step(recording_id):
+    """API endpoint to reset a specific transcription step.
+
+    Only allows resetting the latest completed step to maintain consistency.
+    """
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    file_path = recording.get('file_path')
+    if not file_path:
+        return jsonify({'success': False, 'error': 'Recording has no file path'}), 400
+
+    import json
+    data = request.get_json() or {}
+    step_name = data.get('step')
+
+    if not step_name:
+        return jsonify({'success': False, 'error': 'Step name required'}), 400
+
+    from transcription_progress import (
+        get_latest_completed_step,
+        reset_step,
+        get_dependent_steps,
+        detect_transcription_progress
+    )
+
+    # Only allow resetting the latest completed step
+    latest_step = get_latest_completed_step(file_path)
+
+    if not latest_step:
+        return jsonify({'success': False, 'error': 'No completed steps to reset'}), 400
+
+    if step_name != latest_step:
+        return jsonify({
+            'success': False,
+            'error': f'Can only reset the latest completed step: {latest_step}'
+        }), 400
+
+    # Reset the step
+    success = reset_step(file_path, step_name)
+
+    if not success:
+        return jsonify({'success': False, 'error': 'Failed to reset step'}), 500
+
+    # Log the reset action
+    db.add_transcription_log(
+        recording_id,
+        f'Step "{step_name}" reset by user - will be re-run on next transcription',
+        'info'
+    )
+    db.add_recording_log(
+        recording_id,
+        f'Transcription step "{step_name}" reset',
+        'info'
+    )
+
+    # Get updated status
+    steps = detect_transcription_progress(file_path)
+    dependent_steps = get_dependent_steps(step_name)
+
+    return jsonify({
+        'success': True,
+        'message': f'Step "{step_name}" has been reset',
+        'steps': steps,
+        'dependent_steps': dependent_steps
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/transcription/run-step', methods=['POST'])
+def api_run_transcription_step(recording_id):
+    """API endpoint to run a specific transcription step.
+
+    Validates dependencies are met before running the step.
+    """
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    file_path = recording.get('file_path')
+    if not file_path:
+        return jsonify({'success': False, 'error': 'Recording has no file path'}), 400
+
+    import json
+    data = request.get_json() or {}
+    step_name = data.get('step')
+
+    if not step_name:
+        return jsonify({'success': False, 'error': 'Step name required'}), 400
+
+    from transcription_progress import can_run_step, get_step_dependencies
+
+    # Check if step can be run
+    can_run, reason = can_run_step(file_path, step_name)
+
+    if not can_run:
+        return jsonify({
+            'success': False,
+            'error': reason,
+            'dependencies': get_step_dependencies(step_name)
+        }), 400
+
+    # Log the action
+    db.add_transcription_log(
+        recording_id,
+        f'User requested to run step: {step_name}',
+        'info'
+    )
+
+    # Run transcription (it will execute only the requested step since others are complete)
+    # This reuses the existing transcription endpoint
+    return jsonify({
+        'success': True,
+        'message': f'Starting step: {step_name}',
+        'redirect': f'/api/recordings/{recording_id}/transcribe'
     })
 
 
