@@ -234,22 +234,17 @@ class TestTranscriptionService:
             service.transcribe_with_speakers('/nonexistent/file.mp4')
 
     @patch('subprocess.run')
-    @patch('tempfile.NamedTemporaryFile')
     @patch('os.path.exists')
-    def test_extract_audio_to_wav_creates_temp_file(self, mock_exists, mock_temp_file, mock_subprocess):
-        """Test audio extraction creates temporary WAV file."""
-        mock_exists.return_value = True
+    def test_extract_audio_to_wav_creates_persistent_file(self, mock_exists, mock_subprocess):
+        """Test audio extraction creates persistent WAV file next to video."""
+        mock_exists.return_value = False  # WAV doesn't exist yet
         mock_subprocess.return_value = Mock(returncode=0)
-
-        # Mock temp file
-        mock_temp = Mock()
-        mock_temp.name = '/tmp/test_audio.wav'
-        mock_temp_file.return_value = mock_temp
 
         service = TranscriptionService()
         result_path = service.extract_audio_to_wav('/fake/video.mp4')
 
-        assert result_path == '/tmp/test_audio.wav'
+        # Should save next to video file, not in temp directory
+        assert result_path == '/fake/video.wav'
         mock_subprocess.assert_called_once()
         # Verify ffmpeg was called with correct parameters
         call_args = mock_subprocess.call_args[0][0]
@@ -262,12 +257,26 @@ class TestTranscriptionService:
         assert '16000' in call_args
         assert '-ac' in call_args
         assert '1' in call_args
+        assert '/fake/video.wav' in call_args
+
+    @patch('subprocess.run')
+    @patch('os.path.exists')
+    def test_extract_audio_to_wav_reuses_existing(self, mock_exists, mock_subprocess):
+        """Test audio extraction skips extraction if WAV already exists."""
+        mock_exists.return_value = True  # WAV already exists
+
+        service = TranscriptionService()
+        result_path = service.extract_audio_to_wav('/fake/video.mp4')
+
+        # Should return existing path without calling ffmpeg
+        assert result_path == '/fake/video.wav'
+        mock_subprocess.assert_not_called()
 
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_extract_audio_to_wav_with_output_path(self, mock_exists, mock_subprocess):
         """Test audio extraction with specified output path."""
-        mock_exists.return_value = True
+        mock_exists.return_value = False  # Custom path doesn't exist yet
         mock_subprocess.return_value = Mock(returncode=0)
 
         service = TranscriptionService()
@@ -284,6 +293,79 @@ class TestTranscriptionService:
     @patch('os.remove')
     def test_transcribe_with_speakers_extracts_audio_once(self, mock_remove, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
         """Test that transcribe_with_speakers extracts audio once for both Whisper and diarization."""
+        # Video exists, WAV doesn't exist initially, then exists for cleanup
+        def exists_side_effect(path):
+            if path == '/fake/video.mp4':
+                return True
+            elif path == '/fake/video.wav':
+                # First call during extraction check: False (needs extraction)
+                # Second call during cleanup check: True (exists to be deleted)
+                if not hasattr(exists_side_effect, 'wav_call_count'):
+                    exists_side_effect.wav_call_count = 0
+                exists_side_effect.wav_call_count += 1
+                return exists_side_effect.wav_call_count > 1
+            return False
+
+        mock_exists.side_effect = exists_side_effect
+        mock_subprocess.return_value = Mock(returncode=0)
+
+        # Mock Whisper model
+        mock_whisper = Mock()
+        mock_segment = Mock()
+        mock_segment.start = 0.0
+        mock_segment.end = 5.0
+        mock_segment.text = ' Test audio'
+        mock_info = Mock()
+        mock_info.language = 'en'
+        mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
+        mock_load_whisper.return_value = mock_whisper
+
+        # Mock diarization pipeline
+        mock_dia = Mock()
+        mock_dia_result = Mock()
+        mock_dia_result.itertracks.return_value = [
+            (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
+        ]
+        mock_dia.return_value = mock_dia_result
+        mock_load_dia.return_value = mock_dia
+
+        service = TranscriptionService(hf_token="test_token")
+
+        with patch('builtins.open', mock_open()):
+            result = service.transcribe_with_speakers(
+                '/fake/video.mp4',
+                save_to_file=False
+            )
+
+        # Verify ffmpeg was called exactly once for audio extraction
+        ffmpeg_calls = [call for call in mock_subprocess.call_args_list if 'ffmpeg' in str(call)]
+        assert len(ffmpeg_calls) == 1, "Audio should be extracted only once"
+
+        # Verify both Whisper and diarization used the extracted audio
+        mock_whisper.transcribe.assert_called_once()
+        mock_dia.assert_called_once()
+
+        # Verify the same audio path was used for both
+        whisper_audio_path = mock_whisper.transcribe.call_args[0][0]
+        dia_audio_path = mock_dia.call_args[0][0]
+        assert whisper_audio_path == dia_audio_path, "Both should use the same extracted audio file"
+        assert whisper_audio_path == '/fake/video.wav', "Should use persistent WAV file"
+
+        # Verify WAV file was cleaned up after successful transcription
+        mock_remove.assert_called_once_with('/fake/video.wav')
+
+        # Verify result
+        assert result['file'] == '/fake/video.mp4'
+        assert result['num_speakers'] == 1
+
+    @patch('subprocess.run')
+    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription_service.TranscriptionService._load_diarization_pipeline')
+    @patch('os.path.exists')
+    @patch('os.remove')
+    def test_transcribe_with_speakers_resumes_after_failure(self, mock_remove, mock_exists, mock_load_dia, mock_load_whisper, mock_subprocess):
+        """Test that transcribe_with_speakers can resume using existing WAV after failure."""
+        # Video exists, WAV already exists (from previous failed attempt)
         mock_exists.return_value = True
         mock_subprocess.return_value = Mock(returncode=0)
 
@@ -309,33 +391,21 @@ class TestTranscriptionService:
 
         service = TranscriptionService(hf_token="test_token")
 
-        with patch('builtins.open', mock_open()), \
-             patch('tempfile.NamedTemporaryFile') as mock_temp:
-            # Mock the temporary file
-            mock_temp_file = Mock()
-            mock_temp_file.name = '/tmp/test_extracted.wav'
-            mock_temp.return_value = mock_temp_file
-
+        with patch('builtins.open', mock_open()):
             result = service.transcribe_with_speakers(
                 '/fake/video.mp4',
                 save_to_file=False
             )
 
-        # Verify ffmpeg was called exactly once for audio extraction
-        ffmpeg_calls = [call for call in mock_subprocess.call_args_list if 'ffmpeg' in str(call)]
-        assert len(ffmpeg_calls) == 1, "Audio should be extracted only once"
+        # Verify ffmpeg was NOT called (reused existing WAV)
+        mock_subprocess.assert_not_called()
 
-        # Verify both Whisper and diarization used the extracted audio
+        # Verify both Whisper and diarization still worked
         mock_whisper.transcribe.assert_called_once()
         mock_dia.assert_called_once()
 
-        # Verify the same audio path was used for both
-        whisper_audio_path = mock_whisper.transcribe.call_args[0][0]
-        dia_audio_path = mock_dia.call_args[0][0]
-        assert whisper_audio_path == dia_audio_path, "Both should use the same extracted audio file"
-
-        # Verify temporary file was cleaned up
-        mock_remove.assert_called()
+        # Verify WAV file was cleaned up after successful transcription
+        mock_remove.assert_called_once_with('/fake/video.wav')
 
         # Verify result
         assert result['file'] == '/fake/video.mp4'
