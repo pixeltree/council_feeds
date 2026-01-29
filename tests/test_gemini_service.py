@@ -94,17 +94,12 @@ class TestGeminiService:
         assert isinstance(result, dict)
         assert 'segments' in result or 'diarization' in result
 
-    @patch('google.generativeai.configure')
-    @patch('google.generativeai.GenerativeModel')
-    @patch('google.generativeai.types')
-    def test_refine_diarization_api_failure(self, mock_types, mock_model_class, mock_configure):
+    @patch('google.genai.Client')
+    def test_refine_diarization_api_failure(self, mock_client_class):
         """Test that API failure returns original JSON."""
-        mock_request_options = Mock()
-        mock_types.RequestOptions.return_value = mock_request_options
-
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = Exception("API Error")
-        mock_model_class.return_value = mock_model
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = Exception("API Error")
+        mock_client_class.return_value = mock_client
 
         result = gemini_service.refine_diarization(
             SAMPLE_PYANNOTE_JSON,
@@ -116,19 +111,14 @@ class TestGeminiService:
         assert result == SAMPLE_PYANNOTE_JSON
         assert 'refined_by' not in result
 
-    @patch('google.generativeai.configure')
-    @patch('google.generativeai.GenerativeModel')
-    @patch('google.generativeai.types')
-    def test_refine_diarization_invalid_json_response(self, mock_types, mock_model_class, mock_configure):
+    @patch('google.genai.Client')
+    def test_refine_diarization_invalid_json_response(self, mock_client_class):
         """Test handling of invalid JSON in response."""
-        mock_request_options = Mock()
-        mock_types.RequestOptions.return_value = mock_request_options
-
-        mock_model = MagicMock()
+        mock_client = MagicMock()
         mock_response = Mock()
         mock_response.text = "This is not valid JSON"
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_class.return_value = mock_client
 
         result = gemini_service.refine_diarization(
             SAMPLE_PYANNOTE_JSON,
@@ -140,17 +130,12 @@ class TestGeminiService:
         assert result == SAMPLE_PYANNOTE_JSON
         assert 'refined_by' not in result
 
-    @patch('google.generativeai.configure')
-    @patch('google.generativeai.GenerativeModel')
-    @patch('google.generativeai.types')
-    def test_refine_diarization_timeout(self, mock_types, mock_model_class, mock_configure):
+    @patch('google.genai.Client')
+    def test_refine_diarization_timeout(self, mock_client_class):
         """Test timeout handling."""
-        mock_request_options = Mock()
-        mock_types.RequestOptions.return_value = mock_request_options
-
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = TimeoutError("Request timed out")
-        mock_model_class.return_value = mock_model
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = TimeoutError("Request timed out")
+        mock_client_class.return_value = mock_client
 
         result = gemini_service.refine_diarization(
             SAMPLE_PYANNOTE_JSON,
@@ -163,19 +148,14 @@ class TestGeminiService:
         assert result == SAMPLE_PYANNOTE_JSON
         assert 'refined_by' not in result
 
-    @patch('google.generativeai.configure')
-    @patch('google.generativeai.GenerativeModel')
-    @patch('google.generativeai.types')
-    def test_refine_diarization_preserves_timestamps(self, mock_types, mock_model_class, mock_configure):
+    @patch('google.genai.Client')
+    def test_refine_diarization_preserves_timestamps(self, mock_client_class):
         """Test that timestamps are preserved exactly."""
-        mock_request_options = Mock()
-        mock_types.RequestOptions.return_value = mock_request_options
-
-        mock_model = MagicMock()
+        mock_client = MagicMock()
         mock_response = Mock()
         mock_response.text = json.dumps(SAMPLE_GEMINI_RESPONSE)
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client.models.generate_content.return_value = mock_response
+        mock_client_class.return_value = mock_client
 
         result = gemini_service.refine_diarization(
             SAMPLE_PYANNOTE_JSON,

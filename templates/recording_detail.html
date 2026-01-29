@@ -628,14 +628,23 @@
 
                 // Run button - show if dependencies are met
                 if (canRun) {
-                    const buttonText = status === 'completed' ? '▶️ Re-run' : '▶️ Run';
-                    const buttonClass = status === 'completed' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-green-500 hover:bg-green-600';
-                    buttons += `
-                        <button onclick="runStep('${stepKey}')"
-                                class="px-3 py-1 text-xs ${buttonClass} text-white rounded transition ml-2">
-                            ${buttonText}
-                        </button>
-                    `;
+                    if (status === 'completed') {
+                        // For completed steps, "Re-run" should truly re-execute:
+                        // first reset the step, then run it again.
+                        buttons += `
+                            <button onclick="resetStep('${stepKey}'); setTimeout(() => runStep('${stepKey}'), 500);"
+                                    class="px-3 py-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded transition ml-2">
+                                ▶️ Re-run
+                            </button>
+                        `;
+                    } else {
+                        buttons += `
+                            <button onclick="runStep('${stepKey}')"
+                                    class="px-3 py-1 text-xs bg-green-500 hover:bg-green-600 text-white rounded transition ml-2">
+                                ▶️ Run
+                            </button>
+                        `;
+                    }
                 }
 
                 stepDiv.innerHTML = `

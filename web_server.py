@@ -773,9 +773,16 @@ def api_get_transcription_status(recording_id):
     file_path = recording.get('file_path')
     steps = detect_transcription_progress(file_path) if file_path else {}
 
-    # Use file-based overall status instead of database status
-    # (files are the source of truth)
-    overall_status = get_overall_status(steps) if steps else recording.get('transcription_status', 'pending')
+    # Use file-based overall status, but merge DB failure status
+    # (files are the source of truth, but we need to preserve failure state)
+    if steps:
+        overall_status = get_overall_status(steps)
+        # If no steps completed but DB shows failed, preserve the failure
+        completed_count = sum(1 for step in steps.values() if step.get('status') == 'completed')
+        if completed_count == 0 and recording.get('transcription_status') == 'failed':
+            overall_status = 'failed'
+    else:
+        overall_status = recording.get('transcription_status', 'pending')
 
     return jsonify({
         'success': True,
