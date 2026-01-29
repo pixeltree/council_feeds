@@ -18,7 +18,6 @@ from unittest.mock import Mock, patch
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import database as db
 from transcription_service import TranscriptionService
 
 
@@ -63,7 +62,6 @@ class TestGeminiResumability:
             'gemini': {'status': 'completed'}
         }
 
-        service = TranscriptionService(pyannote_api_token='fake-token')
         video_path = os.path.join(temp_dir, 'test.mp4')
         wav_path = os.path.join(temp_dir, 'test.wav')
         pyannote_path = os.path.join(temp_dir, 'test.mp4.diarization.pyannote.json')

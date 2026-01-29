@@ -1093,7 +1093,7 @@ def update_transcription_step(recording_id: int, step_name: str, status: str, da
         if row and row['transcription_steps']:
             try:
                 steps = json.loads(row['transcription_steps'])
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 steps = {}
 
         # Update specific step
@@ -1131,7 +1131,7 @@ def get_transcription_steps(recording_id: int) -> Dict:
         if row and row['transcription_steps']:
             try:
                 return json.loads(row['transcription_steps'])
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
         return {}

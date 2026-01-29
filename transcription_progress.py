@@ -319,7 +319,7 @@ def can_run_step(video_path: str, step_name: str) -> tuple:
 
     # Check if step is already completed
     if current_status == 'completed':
-        return (True, 'Step already completed (will re-run)')
+        return (True, 'Step already completed; reset this step to run it again')
 
     # Check if all dependencies are met
     dependencies = get_step_dependencies(step_name)

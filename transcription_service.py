@@ -531,7 +531,6 @@ class TranscriptionService:
             transcription = None
             pyannote_path = video_path + '.diarization.pyannote.json'
             whisper_path = video_path + '.whisper.json'
-            transcript_path = video_path + '.transcript.json'
 
             # Check if we can skip Whisper (whisper file exists)
             if steps.get('whisper', {}).get('status') == 'completed' and os.path.exists(whisper_path):
@@ -639,7 +638,6 @@ class TranscriptionService:
                     with open(gemini_path, 'r', encoding='utf-8') as f:
                         gemini_transcript = json.load(f)
                         final_transcript = gemini_transcript
-                        merged_segments = final_transcript.get('segments', [])
                 else:
                     # Run Gemini refinement
                     try:
@@ -775,7 +773,6 @@ class TranscriptionService:
 
                             # Use Gemini version for final transcript
                             final_transcript = gemini_transcript
-                            merged_segments = final_transcript.get('segments', [])
 
                             print("[TRANSCRIPTION] Using Gemini-refined speaker labels")
                             if recording_id:
