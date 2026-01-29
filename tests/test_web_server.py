@@ -56,10 +56,11 @@ class TestWebServerStopRecording:
 class TestWebServerProcessRecording:
     """Test process recording API endpoint."""
 
+    @patch('web_server.db.update_post_process_status')
     @patch('web_server.db.get_recording_by_id')
     @patch('web_server.os.path.exists')
     @patch('web_server.threading.Thread')
-    def test_process_recording_success(self, mock_thread, mock_exists, mock_get_recording, client):
+    def test_process_recording_success(self, mock_thread, mock_exists, mock_get_recording, mock_update_status, client):
         """Test successfully starting post-processing."""
         mock_get_recording.return_value = {
             'id': 1,

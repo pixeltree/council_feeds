@@ -293,6 +293,7 @@ class TestPostProcessor:
         assert result['segments_created'] == 0
         assert 'No breaks detected' in result['message']
 
+    @patch('post_processor.db.add_recording_log')
     @patch('post_processor.db.update_recording')
     @patch('post_processor.os.remove')
     @patch('post_processor.PostProcessor.has_audio')
@@ -304,7 +305,8 @@ class TestPostProcessor:
         mock_exists,
         mock_has_audio,
         mock_remove,
-        mock_update_recording
+        mock_update_recording,
+        mock_add_log
     ):
         """Test processing deletes file when no audio detected."""
         mock_exists.return_value = True
