@@ -83,20 +83,21 @@ def _extract_council_members(soup: BeautifulSoup) -> List[Dict[str, str]]:
     members = []
 
     # Pattern 1: Search for text containing "Councillor" or "Mayor"
-    councillor_pattern = re.compile(r'\b(Councillor|Mayor|Cllr\.?)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)', re.IGNORECASE)
+    # Use [ \t] to match only spaces/tabs, not newlines
+    councillor_pattern = re.compile(r'\b(Councillor|Mayor|Cllr\.?)[ \t]+([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*)', re.IGNORECASE)
 
-    # Search in all text content
+    # Search in individual lines to avoid matching across newlines
     text_content = soup.get_text()
-    matches = councillor_pattern.findall(text_content)
-
-    for title, name in matches:
-        name = name.strip()
-        if name and len(name) > 3:  # Basic validation
-            members.append({
-                'name': name,
-                'role': title.capitalize(),
-                'confidence': 'high'
-            })
+    for line in text_content.split('\n'):
+        matches = councillor_pattern.findall(line)
+        for title, name in matches:
+            name = name.strip()
+            if name and len(name) > 3:  # Basic validation
+                members.append({
+                    'name': name,
+                    'role': title.capitalize(),
+                    'confidence': 'high'
+                })
 
     # Pattern 2: Look for common HTML structures (tables, lists)
     # Search for elements that might contain member lists
@@ -114,7 +115,8 @@ def _extract_council_members(soup: BeautifulSoup) -> List[Dict[str, str]]:
                         'confidence': 'high'
                     })
 
-    return members
+    # Deduplicate within this function (same person found multiple times)
+    return _deduplicate_speakers(members)
 
 
 def _extract_presenters(soup: BeautifulSoup) -> List[Dict[str, str]]:
@@ -128,24 +130,26 @@ def _extract_presenters(soup: BeautifulSoup) -> List[Dict[str, str]]:
     presenters = []
 
     # Pattern: "Presenter:" or "Presentation by" followed by name
+    # Use [ \t] to match only spaces/tabs, not newlines
     presenter_pattern = re.compile(
-        r'\b(Presenter|Presentation\s+by|Presented\s+by)[\s:]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+        r'\b(Presenter|Presentation[ \t]+by|Presented[ \t]+by)[\s:]+([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*)',
         re.IGNORECASE
     )
 
     text_content = soup.get_text()
-    matches = presenter_pattern.findall(text_content)
+    for line in text_content.split('\n'):
+        matches = presenter_pattern.findall(line)
+        for _, name in matches:
+            name = name.strip()
+            if name and len(name) > 3:
+                presenters.append({
+                    'name': name,
+                    'role': 'Presenter',
+                    'confidence': 'medium'
+                })
 
-    for _, name in matches:
-        name = name.strip()
-        if name and len(name) > 3:
-            presenters.append({
-                'name': name,
-                'role': 'Presenter',
-                'confidence': 'medium'
-            })
-
-    return presenters
+    # Deduplicate within this function
+    return _deduplicate_speakers(presenters)
 
 
 def _extract_delegations(soup: BeautifulSoup) -> List[Dict[str, str]]:
@@ -160,24 +164,26 @@ def _extract_delegations(soup: BeautifulSoup) -> List[Dict[str, str]]:
     delegations = []
 
     # Pattern: "Delegation:" or "Speaker:" followed by name
+    # Use [ \t] to match only spaces/tabs, not newlines
     delegation_pattern = re.compile(
-        r'\b(Delegation|Speaker|Deputation)[\s:]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)',
+        r'\b(Delegation|Speaker|Deputation)[\s:]+([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*)',
         re.IGNORECASE
     )
 
     text_content = soup.get_text()
-    matches = delegation_pattern.findall(text_content)
+    for line in text_content.split('\n'):
+        matches = delegation_pattern.findall(line)
+        for _, name in matches:
+            name = name.strip()
+            if name and len(name) > 3:
+                delegations.append({
+                    'name': name,
+                    'role': 'Delegation',
+                    'confidence': 'medium'
+                })
 
-    for _, name in matches:
-        name = name.strip()
-        if name and len(name) > 3:
-            delegations.append({
-                'name': name,
-                'role': 'Delegation',
-                'confidence': 'medium'
-            })
-
-    return delegations
+    # Deduplicate within this function
+    return _deduplicate_speakers(delegations)
 
 
 def _deduplicate_speakers(speakers: List[Dict[str, str]]) -> List[Dict[str, str]]:
