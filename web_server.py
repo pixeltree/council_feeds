@@ -11,6 +11,7 @@ from config import CALGARY_TZ, WEB_HOST, WEB_PORT
 import os
 from post_processor import PostProcessor
 import threading
+from shared_state import monitoring_state
 
 app = Flask(__name__)
 
@@ -90,8 +91,7 @@ def index():
     formatted_recordings = format_recordings(recent_recordings)
 
     # Get monitoring status
-    import main
-    monitoring_enabled = main.monitoring_enabled
+    monitoring_enabled = monitoring_state.enabled
 
     # Current time
     now = datetime.now(CALGARY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -232,8 +232,7 @@ def api_stop_recording():
 @app.route('/api/monitoring/start', methods=['POST'])
 def api_start_monitoring():
     """API endpoint to start monitoring."""
-    import main
-    main.monitoring_enabled = True
+    monitoring_state.enable()
     return jsonify({
         'success': True,
         'message': 'Monitoring started'
@@ -243,8 +242,7 @@ def api_start_monitoring():
 @app.route('/api/monitoring/stop', methods=['POST'])
 def api_stop_monitoring():
     """API endpoint to stop monitoring."""
-    import main
-    main.monitoring_enabled = False
+    monitoring_state.disable()
     return jsonify({
         'success': True,
         'message': 'Monitoring stopped'
@@ -254,9 +252,8 @@ def api_stop_monitoring():
 @app.route('/api/monitoring/status', methods=['GET'])
 def api_monitoring_status():
     """API endpoint to get monitoring status."""
-    import main
     return jsonify({
-        'monitoring_enabled': main.monitoring_enabled
+        'monitoring_enabled': monitoring_state.enabled
     })
 
 

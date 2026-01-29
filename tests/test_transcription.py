@@ -98,6 +98,170 @@ class TestTranscriptionService:
         assert segments[0]['speaker'] == 'SPEAKER_00'
         assert mock_post.call_count == 2
 
+    @patch('time.sleep')
+    @patch('os.path.getsize')
+    @patch('builtins.open', mock_open(read_data=b'fake audio data'))
+    @patch('requests.put')
+    @patch('requests.post')
+    @patch('requests.get')
+    def test_perform_diarization_async_polling_success(self, mock_get, mock_post, mock_put, mock_getsize, mock_sleep):
+        """Test diarization via API with async polling that succeeds."""
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
+
+        # Mock the upload URL response
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        # Mock the file upload response
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock the diarization job response (async with jobId)
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {'jobId': 'test-job-123'}
+
+        # Setup post to return different responses based on call
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
+
+        # Mock polling responses: processing -> processing -> succeeded
+        mock_get_response_1 = Mock()
+        mock_get_response_1.status_code = 200
+        mock_get_response_1.json.return_value = {'status': 'processing'}
+        mock_get_response_1.raise_for_status = Mock()
+
+        mock_get_response_2 = Mock()
+        mock_get_response_2.status_code = 200
+        mock_get_response_2.json.return_value = {'status': 'processing'}
+        mock_get_response_2.raise_for_status = Mock()
+
+        mock_get_response_3 = Mock()
+        mock_get_response_3.status_code = 200
+        mock_get_response_3.json.return_value = {
+            'status': 'succeeded',
+            'output': {
+                'diarization': [
+                    {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'},
+                    {'start': 10.0, 'end': 20.0, 'speaker': 'SPEAKER_01'}
+                ]
+            }
+        }
+        mock_get_response_3.raise_for_status = Mock()
+
+        mock_get.side_effect = [mock_get_response_1, mock_get_response_2, mock_get_response_3]
+
+        service = TranscriptionService(pyannote_api_token="test_token", device="cpu")
+
+        segments = service.perform_diarization('/fake/audio.wav')
+
+        assert len(segments) == 2
+        assert segments[0]['start'] == 0.0
+        assert segments[0]['end'] == 10.0
+        assert segments[0]['speaker'] == 'SPEAKER_00'
+        assert segments[1]['start'] == 10.0
+        assert segments[1]['end'] == 20.0
+        assert segments[1]['speaker'] == 'SPEAKER_01'
+        assert mock_get.call_count == 3
+        assert mock_sleep.call_count == 3
+
+    @patch('time.sleep')
+    @patch('os.path.getsize')
+    @patch('builtins.open', mock_open(read_data=b'fake audio data'))
+    @patch('requests.put')
+    @patch('requests.post')
+    @patch('requests.get')
+    def test_perform_diarization_async_polling_failure(self, mock_get, mock_post, mock_put, mock_getsize, mock_sleep):
+        """Test diarization via API with async polling that fails."""
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
+
+        # Mock the upload URL response
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        # Mock the file upload response
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock the diarization job response (async with jobId)
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {'jobId': 'test-job-123'}
+
+        # Setup post to return different responses based on call
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
+
+        # Mock polling responses: processing -> failed
+        mock_get_response_1 = Mock()
+        mock_get_response_1.status_code = 200
+        mock_get_response_1.json.return_value = {'status': 'processing'}
+        mock_get_response_1.raise_for_status = Mock()
+
+        mock_get_response_2 = Mock()
+        mock_get_response_2.status_code = 200
+        mock_get_response_2.json.return_value = {
+            'status': 'failed',
+            'error': 'Audio file is corrupted'
+        }
+        mock_get_response_2.raise_for_status = Mock()
+
+        mock_get.side_effect = [mock_get_response_1, mock_get_response_2]
+
+        service = TranscriptionService(pyannote_api_token="test_token", device="cpu")
+
+        with pytest.raises(Exception, match="Diarization job failed: Audio file is corrupted"):
+            service.perform_diarization('/fake/audio.wav')
+
+        assert mock_get.call_count == 2
+
+    @patch('time.sleep')
+    @patch('os.path.getsize')
+    @patch('builtins.open', mock_open(read_data=b'fake audio data'))
+    @patch('requests.put')
+    @patch('requests.post')
+    @patch('requests.get')
+    def test_perform_diarization_async_polling_timeout(self, mock_get, mock_post, mock_put, mock_getsize, mock_sleep):
+        """Test diarization via API with async polling that times out."""
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
+
+        # Mock the upload URL response
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        # Mock the file upload response
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock the diarization job response (async with jobId)
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {'jobId': 'test-job-123'}
+
+        # Setup post to return different responses based on call
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
+
+        # Mock polling responses: always return processing (will timeout)
+        mock_get_response = Mock()
+        mock_get_response.status_code = 200
+        mock_get_response.json.return_value = {'status': 'processing'}
+        mock_get_response.raise_for_status = Mock()
+
+        # Return processing status indefinitely
+        mock_get.return_value = mock_get_response
+
+        service = TranscriptionService(pyannote_api_token="test_token", device="cpu")
+
+        with pytest.raises(Exception, match="Diarization job timed out after 600 seconds"):
+            service.perform_diarization('/fake/audio.wav')
+
+        # Should hit max iterations (600 / 5 = 120)
+        assert mock_get.call_count == 120
+
     def test_merge_transcription_and_diarization(self):
         """Test merging transcription with diarization."""
         service = TranscriptionService()

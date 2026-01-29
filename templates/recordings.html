@@ -20,8 +20,30 @@
         }
     </style>
     <script>
-        // Auto-refresh every 10 seconds
-        setTimeout(() => location.reload(), 10000);
+        // Auto-refresh every 10 seconds with pause-on-hover and visibility checks
+        document.addEventListener('DOMContentLoaded', function () {
+            var refreshEnabled = true;
+
+            // Pause auto-refresh while the user is hovering over the page
+            var body = document.body;
+            if (body) {
+                body.addEventListener('mouseenter', function () {
+                    refreshEnabled = false;
+                });
+                body.addEventListener('mouseleave', function () {
+                    refreshEnabled = true;
+                });
+            }
+
+            // Periodically refresh the page, but only when appropriate
+            setInterval(function () {
+                // Do not refresh if the user is interacting (hovering) or the page is hidden
+                if (!refreshEnabled || document.hidden) {
+                    return;
+                }
+                location.reload();
+            }, 10000);
+        });
     </script>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">

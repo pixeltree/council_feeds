@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import Mock, patch
 import web_server
 from web_server import app
+from shared_state import monitoring_state
 
 
 @pytest.fixture
@@ -20,41 +21,51 @@ class TestWebServerMonitoring:
 
     def test_start_monitoring(self, client):
         """Test starting monitoring."""
-        with patch('main.monitoring_enabled', False) as mock_enabled:
-            response = client.post('/api/monitoring/start')
+        # Set initial state
+        monitoring_state.disable()
 
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data['success'] is True
-            assert 'started' in data['message'].lower()
+        response = client.post('/api/monitoring/start')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert 'started' in data['message'].lower()
+        # Verify state was actually changed
+        assert monitoring_state.enabled is True
 
     def test_stop_monitoring(self, client):
         """Test stopping monitoring."""
-        with patch('main.monitoring_enabled', True) as mock_enabled:
-            response = client.post('/api/monitoring/stop')
+        # Set initial state
+        monitoring_state.enable()
 
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data['success'] is True
-            assert 'stopped' in data['message'].lower()
+        response = client.post('/api/monitoring/stop')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert 'stopped' in data['message'].lower()
+        # Verify state was actually changed
+        assert monitoring_state.enabled is False
 
     def test_monitoring_status_enabled(self, client):
         """Test getting monitoring status when enabled."""
-        with patch('main.monitoring_enabled', True):
-            response = client.get('/api/monitoring/status')
+        monitoring_state.enable()
 
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data['monitoring_enabled'] is True
+        response = client.get('/api/monitoring/status')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['monitoring_enabled'] is True
 
     def test_monitoring_status_disabled(self, client):
         """Test getting monitoring status when disabled."""
-        with patch('main.monitoring_enabled', False):
-            response = client.get('/api/monitoring/status')
+        monitoring_state.disable()
 
-            assert response.status_code == 200
-            data = response.get_json()
-            assert data['monitoring_enabled'] is False
+        response = client.get('/api/monitoring/status')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['monitoring_enabled'] is False
 
 
 @pytest.mark.unit

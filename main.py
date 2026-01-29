@@ -11,6 +11,9 @@ import database as db
 # Import web server
 import web_server
 
+# Import shared state for thread-safe access
+from shared_state import monitoring_state, calendar_refresh_state
+
 # Import configuration and services
 from config import (
     CALGARY_TZ,
@@ -28,12 +31,6 @@ from services import (
     RecordingService
 )
 
-# Global flag to trigger calendar refresh
-calendar_refresh_requested = False
-
-# Global flag to control monitoring
-monitoring_enabled = False
-
 # Initialize services
 calendar_service = CalendarService()
 meeting_scheduler = MeetingScheduler()
@@ -42,10 +39,9 @@ recording_service = RecordingService(stream_service=stream_service)
 
 def daily_calendar_refresh():
     """Scheduled task: Refresh calendar at midnight."""
-    global calendar_refresh_requested
     now = datetime.now(CALGARY_TZ)
     print(f"\n[{now.strftime('%H:%M:%S')}] 📅 SCHEDULED TASK: Daily calendar refresh at midnight")
-    calendar_refresh_requested = True
+    calendar_refresh_state.request()
 
 def run_scheduler():
     """Run the scheduler in a separate thread."""
@@ -60,8 +56,6 @@ def run_scheduler():
 
 def main():
     """Main monitoring loop with smart scheduling."""
-    global monitoring_enabled
-
     print("=" * 70)
     print("Calgary Council Stream Recorder - Smart Scheduler Edition")
     print("=" * 70)
@@ -76,7 +70,7 @@ def main():
 
     # Check if monitoring should auto-start
     auto_start = os.environ.get('AUTO_START_MONITORING', 'false').lower() == 'true'
-    monitoring_enabled = auto_start
+    monitoring_state.enabled = auto_start
     if auto_start:
         print("🟢 Auto-start monitoring: ENABLED")
     else:
@@ -129,18 +123,18 @@ def main():
 
     while True:
         try:
-            global calendar_refresh_requested
             current_time = datetime.now(CALGARY_TZ)
 
             # If monitoring is disabled, just sleep and check again
-            if not monitoring_enabled:
+            if not monitoring_state.enabled:
                 time.sleep(10)  # Check every 10 seconds if monitoring should be enabled
                 continue
 
             # Refresh calendar if scheduled task requested it
-            if calendar_refresh_requested:
+            if calendar_refresh_state.requested:
                 print(f"[{current_time.strftime('%H:%M:%S')}] Processing scheduled calendar refresh...")
                 meetings = calendar_service.get_upcoming_meetings(force_refresh=True)
+                calendar_refresh_state.clear()
 
             # Determine if we're in active monitoring mode
             in_window, current_meeting = meeting_scheduler.is_within_meeting_window(current_time, meetings)
