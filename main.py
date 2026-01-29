@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 import threading
 from datetime import datetime
@@ -30,6 +31,9 @@ from services import (
 # Global flag to trigger calendar refresh
 calendar_refresh_requested = False
 
+# Global flag to control monitoring
+monitoring_enabled = False
+
 # Initialize services
 calendar_service = CalendarService()
 meeting_scheduler = MeetingScheduler()
@@ -56,6 +60,8 @@ def run_scheduler():
 
 def main():
     """Main monitoring loop with smart scheduling."""
+    global monitoring_enabled
+
     print("=" * 70)
     print("Calgary Council Stream Recorder - Smart Scheduler Edition")
     print("=" * 70)
@@ -66,6 +72,15 @@ def main():
     print(f"Idle polling: every {IDLE_CHECK_INTERVAL}s (outside meeting windows)")
     print(f"Meeting buffer: {MEETING_BUFFER_BEFORE.seconds//60} min before, {MEETING_BUFFER_AFTER.seconds//3600} hours after")
     print(f"Web interface: http://0.0.0.0:5000")
+    print("-" * 70)
+
+    # Check if monitoring should auto-start
+    auto_start = os.environ.get('AUTO_START_MONITORING', 'false').lower() == 'true'
+    monitoring_enabled = auto_start
+    if auto_start:
+        print("🟢 Auto-start monitoring: ENABLED")
+    else:
+        print("🔴 Auto-start monitoring: DISABLED - Use web interface to start")
     print("-" * 70)
 
     # Set recording service in web server so it can stop recordings
@@ -116,6 +131,11 @@ def main():
         try:
             global calendar_refresh_requested
             current_time = datetime.now(CALGARY_TZ)
+
+            # If monitoring is disabled, just sleep and check again
+            if not monitoring_enabled:
+                time.sleep(10)  # Check every 10 seconds if monitoring should be enabled
+                continue
 
             # Refresh calendar if scheduled task requested it
             if calendar_refresh_requested:

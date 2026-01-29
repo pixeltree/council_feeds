@@ -15,6 +15,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=America/Edmonton
+      - AUTO_START_MONITORING=${AUTO_START_MONITORING:-false}
       - ENABLE_POST_PROCESSING=${ENABLE_POST_PROCESSING:-false}
       - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-false}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}

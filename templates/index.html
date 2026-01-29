@@ -86,6 +86,56 @@
             }
         }
 
+        async function startMonitoring() {
+            const button = document.getElementById('start-monitoring-button');
+            button.disabled = true;
+            button.textContent = 'Starting...';
+
+            try {
+                const response = await fetch('/api/monitoring/start', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    location.reload();
+                } else {
+                    alert('Failed to start monitoring: ' + (result.error || 'Unknown error'));
+                    button.disabled = false;
+                    button.textContent = '▶️ Start Monitoring';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                button.disabled = false;
+                button.textContent = '▶️ Start Monitoring';
+            }
+        }
+
+        async function stopMonitoring() {
+            const button = document.getElementById('stop-monitoring-button');
+            button.disabled = true;
+            button.textContent = 'Stopping...';
+
+            try {
+                const response = await fetch('/api/monitoring/stop', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    location.reload();
+                } else {
+                    alert('Failed to stop monitoring: ' + (result.error || 'Unknown error'));
+                    button.disabled = false;
+                    button.textContent = '⏸️ Stop Monitoring';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                button.disabled = false;
+                button.textContent = '⏸️ Stop Monitoring';
+            }
+        }
+
         async function cleanupStaleRecordings() {
             // First, get stale recordings count
             try {
@@ -142,7 +192,20 @@
 
         <!-- Current Status Card -->
         <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
-            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">Current Status</h2>
+            <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
+                <h2 class="text-gray-800 text-2xl font-bold">Current Status</h2>
+                <div class="flex gap-2">
+                    {% if monitoring_enabled %}
+                        <button id="stop-monitoring-button" onclick="stopMonitoring()" class="bg-orange-600 hover:bg-orange-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                            ⏸️ Stop Monitoring
+                        </button>
+                    {% else %}
+                        <button id="start-monitoring-button" onclick="startMonitoring()" class="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                            ▶️ Start Monitoring
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
             {% if current_recording %}
                 <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-100 text-red-700 font-semibold text-sm">
                     <span class="w-2.5 h-2.5 rounded-full bg-red-700 pulse-dot"></span>
@@ -162,11 +225,19 @@
                     Stop Recording
                 </button>
             {% else %}
-                <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-green-100 text-green-700 font-semibold text-sm">
-                    <span class="w-2.5 h-2.5 rounded-full bg-green-700 pulse-dot"></span>
-                    MONITORING
-                </div>
-                <p class="mt-4 text-gray-600">System is actively monitoring for live streams</p>
+                {% if monitoring_enabled %}
+                    <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-green-100 text-green-700 font-semibold text-sm">
+                        <span class="w-2.5 h-2.5 rounded-full bg-green-700 pulse-dot"></span>
+                        MONITORING
+                    </div>
+                    <p class="mt-4 text-gray-600">System is actively monitoring for live streams</p>
+                {% else %}
+                    <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-gray-100 text-gray-700 font-semibold text-sm">
+                        <span class="w-2.5 h-2.5 rounded-full bg-gray-500"></span>
+                        MONITORING DISABLED
+                    </div>
+                    <p class="mt-4 text-gray-600">Click "Start Monitoring" to begin watching for live streams</p>
+                {% endif %}
             {% endif %}
         </div>
 
