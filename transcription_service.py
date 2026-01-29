@@ -223,8 +223,9 @@ class TranscriptionService:
 
         # Convert to list of segments
         segments = []
-        # pyannote.audio 4.0+ changed API - iterate directly over annotation
-        for segment, _, speaker in diarization.itertracks(yield_label=True):
+        # pyannote.audio 4.0+ changed API - DiarizeOutput.speaker_diarization returns Annotation
+        # Iterate directly over Annotation to get (segment, speaker) tuples
+        for segment, _, speaker in diarization.speaker_diarization.itertracks(yield_label=True):
             segments.append({
                 'start': segment.start,
                 'end': segment.end,

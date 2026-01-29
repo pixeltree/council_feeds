@@ -195,9 +195,11 @@ class TestTranscriptionService:
         # Mock diarization pipeline
         mock_dia = Mock()
         mock_dia_result = Mock()
-        mock_dia_result.itertracks.return_value = [
+        mock_annotation = Mock()
+        mock_annotation.itertracks.return_value = [
             (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
         ]
+        mock_dia_result.speaker_diarization = mock_annotation
         mock_dia.return_value = mock_dia_result
         mock_load_dia.return_value = mock_dia
 
@@ -323,9 +325,11 @@ class TestTranscriptionService:
         # Mock diarization pipeline
         mock_dia = Mock()
         mock_dia_result = Mock()
-        mock_dia_result.itertracks.return_value = [
+        mock_annotation = Mock()
+        mock_annotation.itertracks.return_value = [
             (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
         ]
+        mock_dia_result.speaker_diarization = mock_annotation
         mock_dia.return_value = mock_dia_result
         mock_load_dia.return_value = mock_dia
 
@@ -383,9 +387,11 @@ class TestTranscriptionService:
         # Mock diarization pipeline
         mock_dia = Mock()
         mock_dia_result = Mock()
-        mock_dia_result.itertracks.return_value = [
+        mock_annotation = Mock()
+        mock_annotation.itertracks.return_value = [
             (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
         ]
+        mock_dia_result.speaker_diarization = mock_annotation
         mock_dia.return_value = mock_dia_result
         mock_load_dia.return_value = mock_dia
 
@@ -421,9 +427,11 @@ class TestTranscriptionService:
         # Mock diarization pipeline
         mock_dia = Mock()
         mock_dia_result = Mock()
-        mock_dia_result.itertracks.return_value = [
+        mock_annotation = Mock()
+        mock_annotation.itertracks.return_value = [
             (Mock(start=0.0, end=10.0), None, 'SPEAKER_00')
         ]
+        mock_dia_result.speaker_diarization = mock_annotation
         mock_dia.return_value = mock_dia_result
         mock_load_dia.return_value = mock_dia
 
