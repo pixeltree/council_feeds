@@ -361,8 +361,12 @@ class TestTranscriptionService:
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('requests.post')
     @patch('os.path.exists')
-    def test_transcribe_with_speakers_success(self, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
+    @patch('transcription_progress.detect_transcription_progress')
+    def test_transcribe_with_speakers_success(self, mock_progress, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test complete transcription pipeline."""
+        # Mock resumability detection to return no completed steps
+        mock_progress.return_value = {}
+
         mock_exists.return_value = True
         mock_getsize.return_value = 1024 * 1024  # 1 MB
 
@@ -490,9 +494,13 @@ class TestTranscriptionService:
     @patch('transcription_service.TranscriptionService._load_whisper_model')
     @patch('requests.post')
     @patch('os.path.exists')
+    @patch('transcription_progress.detect_transcription_progress')
     @patch('os.remove')
-    def test_transcribe_with_speakers_extracts_audio_once(self, mock_remove, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
+    def test_transcribe_with_speakers_extracts_audio_once(self, mock_remove, mock_progress, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test that transcribe_with_speakers extracts audio once for both Whisper and diarization."""
+        # Mock resumability detection to return no completed steps
+        mock_progress.return_value = {}
+
         mock_getsize.return_value = 1024 * 1024  # 1 MB
         # Video exists, WAV doesn't exist initially, then exists for cleanup
         def exists_side_effect(path):
@@ -574,8 +582,12 @@ class TestTranscriptionService:
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
-    def test_transcribe_with_speakers_resumes_after_failure(self, mock_remove, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
+    @patch('transcription_progress.detect_transcription_progress')
+    def test_transcribe_with_speakers_resumes_after_failure(self, mock_progress, mock_remove, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test that transcribe_with_speakers can resume using existing WAV after failure."""
+        # Mock resumability detection to return no completed steps
+        mock_progress.return_value = {}
+
         mock_getsize.return_value = 1024 * 1024  # 1 MB
         # Video exists, WAV already exists (from previous failed attempt)
         mock_exists.return_value = True

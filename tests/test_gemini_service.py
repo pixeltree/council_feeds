@@ -204,18 +204,6 @@ class TestGeminiService:
         assert isinstance(result, dict)
         assert 'segments' in result or 'diarization' in result
 
-    def test_refine_diarization_import_error(self):
-        """Test handling when google-generativeai is not installed."""
-        with patch('builtins.__import__', side_effect=ImportError("No module named 'google.generativeai'")):
-            result = gemini_service.refine_diarization(
-                SAMPLE_PYANNOTE_JSON,
-                SAMPLE_EXPECTED_SPEAKERS,
-                'Council Meeting',
-                api_key='test_key'
-            )
-
-            assert result == SAMPLE_PYANNOTE_JSON
-
     def test_refine_diarization_large_meeting_warning(self, capfd):
         """Test that large meetings trigger a warning."""
         # Create a large diarization with 800 segments (enough to trigger warning)
@@ -235,18 +223,12 @@ class TestGeminiService:
             'num_speakers': 5
         }
 
-        with patch('google.generativeai.configure'), \
-             patch('google.generativeai.GenerativeModel') as mock_model_class, \
-             patch('google.generativeai.types') as mock_types:
-
-            mock_request_options = Mock()
-            mock_types.RequestOptions.return_value = mock_request_options
-
-            mock_model = MagicMock()
+        with patch('google.genai.Client') as mock_client_class:
+            mock_client = MagicMock()
             mock_response = Mock()
             mock_response.text = json.dumps(large_diarization)
-            mock_model.generate_content.return_value = mock_response
-            mock_model_class.return_value = mock_model
+            mock_client.models.generate_content.return_value = mock_response
+            mock_client_class.return_value = mock_client
 
             gemini_service.refine_diarization(
                 large_diarization,
@@ -256,7 +238,7 @@ class TestGeminiService:
             )
 
             captured = capfd.readouterr()
-            assert 'WARNING: Diarization is very large' in captured.out
+            assert 'WARNING: Transcript is very large' in captured.out
 
     def test_refine_diarization_skips_huge_meetings(self, capfd):
         """Test that meetings with >1000 segments are skipped."""
@@ -301,10 +283,8 @@ class TestConstructPrompt:
         )
 
         assert 'Council Meeting' in prompt
-        assert 'Jyoti Gondek' in prompt
-        assert 'Mayor' in prompt
-        assert 'Andre Chabot' in prompt
-        assert 'Councillor' in prompt
+        assert 'Mayor Gondek' in prompt  # Now formatted as "Role LastName"
+        assert 'Councillor Chabot' in prompt  # Now formatted as "Role LastName"
         assert 'SPEAKER_00' in prompt
         assert 'Map generic speaker labels' in prompt
 
@@ -378,19 +358,21 @@ class TestCountUniqueSpeakers:
         assert 'SPEAKER_00' in speakers
         assert 'SPEAKER_01' in speakers
 
-    def test_count_unique_speakers_from_diarization_key(self):
-        """Test counting when data is under 'diarization' key."""
-        diarization = {
-            'diarization': [
-                {'speaker': 'SPEAKER_00'},
-                {'speaker': 'SPEAKER_01'},
-                {'speaker': 'SPEAKER_00'}
+    def test_count_unique_speakers_from_segments_key(self):
+        """Test counting speakers from segments key."""
+        transcript = {
+            'segments': [
+                {'speaker': 'SPEAKER_00', 'text': 'Hello'},
+                {'speaker': 'SPEAKER_01', 'text': 'World'},
+                {'speaker': 'SPEAKER_00', 'text': 'Again'}
             ]
         }
 
-        speakers = gemini_service._count_unique_speakers(diarization)
+        speakers = gemini_service._count_unique_speakers(transcript)
 
         assert len(speakers) == 2
+        assert 'SPEAKER_00' in speakers
+        assert 'SPEAKER_01' in speakers
 
     def test_count_unique_speakers_empty(self):
         """Test counting with no segments."""

@@ -249,6 +249,12 @@ def init_database():
         if 'speakers' not in columns:
             cursor.execute("ALTER TABLE recordings ADD COLUMN speakers TEXT")  # JSON array of speaker info
 
+        # Migration: Add step-level transcription tracking columns
+        if 'transcription_steps' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN transcription_steps TEXT")  # JSON object tracking individual steps
+        if 'wav_path' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN wav_path TEXT")  # Path to extracted WAV file
+
 
 def save_meetings(meetings: List[Dict]) -> int:
     """
@@ -1064,6 +1070,87 @@ def get_recordings_needing_transcription(limit: int = 50) -> List[Dict]:
             })
 
         return recordings
+
+
+def update_transcription_step(recording_id: int, step_name: str, status: str, data: Optional[Dict] = None):
+    """Update the status of a specific transcription step.
+
+    Args:
+        recording_id: Recording ID
+        step_name: Name of step ('extraction', 'whisper', 'diarization', 'gemini', 'merge')
+        status: Step status ('pending', 'in_progress', 'completed', 'failed', 'skipped')
+        data: Optional dict with step-specific data (e.g., file paths, error messages)
+    """
+    import json
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get existing steps
+        cursor.execute("SELECT transcription_steps FROM recordings WHERE id = ?", (recording_id,))
+        row = cursor.fetchone()
+
+        steps = {}
+        if row and row['transcription_steps']:
+            try:
+                steps = json.loads(row['transcription_steps'])
+            except:
+                steps = {}
+
+        # Update specific step
+        if step_name not in steps:
+            steps[step_name] = {}
+
+        steps[step_name]['status'] = status
+        steps[step_name]['updated_at'] = datetime.now(CALGARY_TZ).isoformat()
+
+        if data:
+            steps[step_name].update(data)
+
+        cursor.execute("""
+            UPDATE recordings
+            SET transcription_steps = ?
+            WHERE id = ?
+        """, (json.dumps(steps), recording_id))
+
+
+def get_transcription_steps(recording_id: int) -> Dict:
+    """Get transcription steps status for a recording.
+
+    Args:
+        recording_id: Recording ID
+
+    Returns:
+        Dictionary of steps with their status and data
+    """
+    import json
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT transcription_steps FROM recordings WHERE id = ?", (recording_id,))
+        row = cursor.fetchone()
+
+        if row and row['transcription_steps']:
+            try:
+                return json.loads(row['transcription_steps'])
+            except:
+                pass
+
+        return {}
+
+
+def update_wav_path(recording_id: int, wav_path: str):
+    """Update the WAV file path for a recording.
+
+    Args:
+        recording_id: Recording ID
+        wav_path: Path to WAV file
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE recordings
+            SET wav_path = ?
+            WHERE id = ?
+        """, (wav_path, recording_id))
 
 
 def add_recording_log(recording_id: int, message: str, level: str = 'info'):
