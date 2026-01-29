@@ -223,10 +223,11 @@ class TranscriptionService:
 
         # Convert to list of segments
         segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        # pyannote.audio 4.0+ changed API - iterate directly over annotation
+        for segment, _, speaker in diarization.itertracks(yield_label=True):
             segments.append({
-                'start': turn.start,
-                'end': turn.end,
+                'start': segment.start,
+                'end': segment.end,
                 'speaker': speaker
             })
 
