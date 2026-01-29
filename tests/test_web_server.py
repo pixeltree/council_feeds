@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import Mock, patch
 import web_server
 from web_server import app
+from shared_state import monitoring_state
 
 
 @pytest.fixture
@@ -12,6 +13,59 @@ def client():
     app.config['TESTING'] = True
     with app.test_client() as client:
         yield client
+
+
+@pytest.mark.unit
+class TestWebServerMonitoring:
+    """Test monitoring control API endpoints."""
+
+    def test_start_monitoring(self, client):
+        """Test starting monitoring."""
+        # Set initial state
+        monitoring_state.disable()
+
+        response = client.post('/api/monitoring/start')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert 'started' in data['message'].lower()
+        # Verify state was actually changed
+        assert monitoring_state.enabled is True
+
+    def test_stop_monitoring(self, client):
+        """Test stopping monitoring."""
+        # Set initial state
+        monitoring_state.enable()
+
+        response = client.post('/api/monitoring/stop')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert 'stopped' in data['message'].lower()
+        # Verify state was actually changed
+        assert monitoring_state.enabled is False
+
+    def test_monitoring_status_enabled(self, client):
+        """Test getting monitoring status when enabled."""
+        monitoring_state.enable()
+
+        response = client.get('/api/monitoring/status')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['monitoring_enabled'] is True
+
+    def test_monitoring_status_disabled(self, client):
+        """Test getting monitoring status when disabled."""
+        monitoring_state.disable()
+
+        response = client.get('/api/monitoring/status')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['monitoring_enabled'] is False
 
 
 @pytest.mark.unit

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Transcription service for Calgary Council Stream Recorder.
-Uses Whisper for speech-to-text and pyannote.audio for speaker diarization.
+Uses Whisper for speech-to-text and pyannote.ai API for speaker diarization.
 """
 
 import os
+import requests
 from faster_whisper import WhisperModel
-import torch
-from pyannote.audio import Pipeline
 from typing import Dict, List, Optional
 from datetime import timedelta
 import json
+import time
 
 
 class TranscriptionService:
@@ -19,7 +19,7 @@ class TranscriptionService:
     def __init__(
         self,
         whisper_model: str = "base",
-        hf_token: Optional[str] = None,
+        pyannote_api_token: Optional[str] = None,
         device: Optional[str] = None
     ):
         """
@@ -27,24 +27,28 @@ class TranscriptionService:
 
         Args:
             whisper_model: Whisper model size (tiny, base, small, medium, large)
-            hf_token: HuggingFace token for pyannote.audio (required for diarization)
-            device: Device to use ('cpu', 'cuda', or None for auto-detect)
+            pyannote_api_token: pyannote.ai API token (required for diarization)
+            device: Device to use for Whisper ('cpu', 'cuda', or None for auto-detect)
         """
         self.whisper_model_name = whisper_model
-        self.hf_token = hf_token
+        self.pyannote_api_token = pyannote_api_token
+        self.pyannote_api_url = "https://api.pyannote.ai/v1/diarize"
 
-        # Determine device
+        # Determine device for Whisper only
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            try:
+                import torch
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                self.device = "cpu"
         else:
             self.device = device
 
-        print(f"[TRANSCRIPTION] Using device: {self.device}")
+        print(f"[TRANSCRIPTION] Using device for Whisper: {self.device}")
         self._last_recording_id = None  # Track last recording ID for logging
 
-        # Lazy load models (only when needed)
+        # Lazy load Whisper model (only when needed)
         self._whisper_model = None
-        self._diarization_pipeline = None
 
     def _load_whisper_model(self):
         """Lazy load Whisper model."""
@@ -59,29 +63,6 @@ class TranscriptionService:
             )
         return self._whisper_model
 
-    def _load_diarization_pipeline(self):
-        """Lazy load pyannote diarization pipeline."""
-        if self._diarization_pipeline is None:
-            if not self.hf_token:
-                raise ValueError(
-                    "HuggingFace token required for speaker diarization. "
-                    "Get one at https://huggingface.co/settings/tokens and "
-                    "accept terms at https://huggingface.co/pyannote/speaker-diarization-3.1"
-                )
-
-            print("[TRANSCRIPTION] Loading speaker diarization pipeline...")
-            # Set HF_TOKEN environment variable - newer huggingface_hub reads this automatically
-            # This avoids parameter name conflicts between pyannote and huggingface_hub versions
-            os.environ['HF_TOKEN'] = self.hf_token
-            self._diarization_pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1"
-            )
-
-            # Move to appropriate device
-            if self.device == "cuda":
-                self._diarization_pipeline.to(torch.device("cuda"))
-
-        return self._diarization_pipeline
 
     def transcribe_audio(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> Dict:
         """
@@ -135,75 +116,274 @@ class TranscriptionService:
 
         return result
 
-    def perform_diarization(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> List[Dict]:
+    def extract_audio_to_wav(self, video_path: str, output_wav_path: Optional[str] = None, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> str:
         """
-        Perform speaker diarization on audio file.
+        Extract audio from video to WAV format suitable for transcription.
 
         Args:
-            audio_path: Path to audio/video file
+            video_path: Path to video file
+            output_wav_path: Optional output path (defaults to video_path with .wav extension)
+            recording_id: Optional recording ID for progress logging
+            segment_number: Optional segment number for logging
+
+        Returns:
+            Path to extracted WAV file
+        """
+        import subprocess
+
+        prefix = f"Segment {segment_number}: " if segment_number else ""
+
+        # Default to saving WAV next to video file for persistence and resume capability
+        if output_wav_path is None:
+            output_wav_path = os.path.splitext(video_path)[0] + '.wav'
+
+        # Check if WAV already exists (resume scenario)
+        if os.path.exists(output_wav_path):
+            msg = f"Using existing audio file: {output_wav_path}"
+            print(f"[TRANSCRIPTION] {msg}")
+            if recording_id:
+                import database as db
+                db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+                db.add_recording_log(recording_id, f'{prefix}{msg}', 'info')
+            return output_wav_path
+
+        msg = "Extracting audio to WAV format"
+        print(f"[TRANSCRIPTION] {msg}...")
+        if recording_id:
+            import database as db
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+            db.add_recording_log(recording_id, f'{prefix}{msg}', 'info')
+
+        # Use ffmpeg to extract audio to WAV
+        # pyannote requires: 16-bit PCM, 16kHz, mono
+        try:
+            subprocess.run([
+                'ffmpeg', '-i', video_path,
+                '-vn',  # No video
+                '-acodec', 'pcm_s16le',  # 16-bit PCM
+                '-ar', '16000',  # 16kHz sample rate
+                '-ac', '1',  # Mono
+                '-y',  # Overwrite
+                output_wav_path
+            ], check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            error_msg = f"ffmpeg failed with return code {e.returncode} when processing '{video_path}'"
+            stderr_output = e.stderr if e.stderr else ""
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            if stderr_output:
+                print(f"[TRANSCRIPTION] ffmpeg stderr:\n{stderr_output}")
+            if recording_id:
+                import database as db
+                db.add_transcription_log(
+                    recording_id,
+                    f"{prefix}{error_msg}. ffmpeg stderr: {stderr_output}",
+                    'error'
+                )
+                db.add_recording_log(
+                    recording_id,
+                    f"{prefix}{error_msg}",
+                    'error'
+                )
+            raise
+
+        msg = f"Audio extracted to {output_wav_path}"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        return output_wav_path
+
+    def perform_diarization(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> List[Dict]:
+        """
+        Perform speaker diarization using pyannote.ai API.
+
+        Args:
+            audio_path: Path to audio/video file (preferably WAV)
             recording_id: Optional recording ID for progress logging
             segment_number: Optional segment number for logging
 
         Returns:
             List of speaker segments with start time, end time, and speaker label
         """
-        import subprocess
-        import tempfile
+        if not self.pyannote_api_token:
+            raise ValueError(
+                "pyannote.ai API token required for speaker diarization. "
+                "Get one at https://www.pyannote.ai/"
+            )
 
-        pipeline = self._load_diarization_pipeline()
-
-        msg = f"Performing speaker diarization: {audio_path}"
+        msg = f"Performing speaker diarization via API: {audio_path}"
         print(f"[TRANSCRIPTION] {msg}")
 
         if recording_id:
             import database as db
             prefix = f"Segment {segment_number}: " if segment_number else ""
-            db.add_transcription_log(recording_id, f'{prefix}Starting speaker diarization (this may take 5-10 minutes on CPU)', 'info')
+            db.add_transcription_log(recording_id, f'{prefix}Starting speaker diarization via pyannote.ai API', 'info')
             db.add_recording_log(recording_id, f'{prefix}Starting speaker diarization', 'info')
 
-        # pyannote requires WAV format - extract audio if needed
-        if not audio_path.endswith('.wav'):
-            print(f"[TRANSCRIPTION] Extracting audio to WAV format for diarization...")
+        headers = {
+            "Authorization": f"Bearer {self.pyannote_api_token}",
+            "Content-Type": "application/json"
+        }
+
+        # Step 1: Create a pre-signed URL for upload
+        filename = os.path.basename(audio_path)
+        media_key = f"{int(time.time())}_{filename}"
+        media_url = f"media://{media_key}"
+
+        msg = "Preparing to upload audio file to pyannote.ai"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        upload_response = requests.post(
+            "https://api.pyannote.ai/v1/media/input",
+            headers=headers,
+            json={"url": media_url},
+            timeout=30
+        )
+
+        if upload_response.status_code not in [200, 201]:
+            error_msg = f"Failed to create upload URL: {upload_response.status_code}: {upload_response.text}"
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
             if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Converting audio to WAV format', 'info')
+                db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+            raise Exception(error_msg)
 
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-                temp_wav_path = temp_wav.name
+        upload_data = upload_response.json()
+        presigned_url = upload_data.get('url')  # Response has 'url' not 'presigned_url'
 
-            # Use ffmpeg to extract audio to WAV
-            subprocess.run([
-                'ffmpeg', '-i', audio_path,
-                '-vn',  # No video
-                '-acodec', 'pcm_s16le',  # 16-bit PCM
-                '-ar', '16000',  # 16kHz sample rate
-                '-ac', '1',  # Mono
-                '-y',  # Overwrite
-                temp_wav_path
-            ], check=True, capture_output=True)
+        # Step 2: Upload the audio file to the pre-signed URL
+        # Get file size for progress tracking
+        file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+        msg = f"Uploading audio file ({file_size_mb:.1f} MB) to pyannote.ai"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
+        with open(audio_path, 'rb') as audio_file:
+            upload_file_response = requests.put(
+                presigned_url,
+                data=audio_file,
+                headers={"Content-Type": "audio/wav"},
+                timeout=300  # 5 minute timeout for file upload
+            )
+
+        if upload_file_response.status_code not in [200, 204]:
+            error_msg = f"Failed to upload file: {upload_file_response.status_code}: {upload_file_response.text}"
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
             if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Audio converted, running diarization model', 'info')
+                db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+            raise Exception(error_msg)
 
-            try:
-                diarization = pipeline(temp_wav_path)
-            finally:
-                # Clean up temp file
-                os.remove(temp_wav_path)
-        else:
-            diarization = pipeline(audio_path)
+        msg = "Audio file uploaded successfully"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        # Step 3: Submit diarization job with the media URL
+        msg = "Submitting diarization job to pyannote.ai"
+        print(f"[TRANSCRIPTION] {msg}")
+        if recording_id:
+            db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+        response = requests.post(
+            self.pyannote_api_url,
+            headers=headers,
+            json={"url": media_url},
+            timeout=30
+        )
+
+        if response.status_code != 200:
+            error_msg = f"API request failed with status {response.status_code}: {response.text}"
+            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+            raise Exception(error_msg)
+
+        result = response.json()
+
+        # Check if job is async (requires polling)
+        job_id = result.get('jobId')
+        if job_id:
+            msg = f"Diarization job started (Job ID: {job_id}). Processing audio..."
+            print(f"[TRANSCRIPTION] {msg}")
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+
+            # Poll for completion with timeout
+            job_url = f"https://api.pyannote.ai/v1/jobs/{job_id}"
+            last_status = None
+            max_poll_time = 600  # 10 minutes max
+            poll_interval = 5  # Poll every 5 seconds
+            max_iterations = max_poll_time // poll_interval
+            iteration = 0
+
+            while iteration < max_iterations:
+                time.sleep(poll_interval)
+                iteration += 1
+
+                try:
+                    job_response = requests.get(job_url, headers=headers, timeout=10)
+                    job_response.raise_for_status()
+                    job_data = job_response.json()
+                except requests.RequestException as e:
+                    error_msg = f"Diarization job status request failed: {e}"
+                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    if recording_id:
+                        db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+                    raise Exception(error_msg)
+                except json.JSONDecodeError as e:
+                    error_msg = f"Diarization job status response was not valid JSON: {e}"
+                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    if recording_id:
+                        db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+                    raise Exception(error_msg)
+
+                status = job_data.get('status')
+
+                # Log status changes
+                if status != last_status:
+                    msg = f"Diarization job status: {status}"
+                    print(f"[TRANSCRIPTION] {msg}")
+                    if recording_id:
+                        db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
+                    last_status = status
+
+                if status == 'succeeded':
+                    result = job_data.get('output', {})
+                    break
+                elif status == 'failed':
+                    error_msg = f"Diarization job failed: {job_data.get('error', 'Unknown error')}"
+                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    if recording_id:
+                        db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+                    raise Exception(error_msg)
+            else:
+                # Timeout reached
+                error_msg = f"Diarization job timed out after {max_poll_time} seconds"
+                print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                if recording_id:
+                    db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
+                raise Exception(error_msg)
 
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
             db.add_recording_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
 
-        # Convert to list of segments
+        # Convert API response to list of segments
+        # pyannote.ai returns diarization in format: {"diarization": [{"start": ..., "end": ..., "speaker": ..., "confidence": ...}]}
         segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            segments.append({
-                'start': turn.start,
-                'end': turn.end,
-                'speaker': speaker
-            })
+        diarization_data = result.get('diarization', result.get('segments', []))
+        for segment_data in diarization_data:
+            segment = {
+                'start': segment_data['start'],
+                'end': segment_data['end'],
+                'speaker': segment_data['speaker']
+            }
+            # Include confidence score if available
+            if 'confidence' in segment_data:
+                segment['confidence'] = segment_data['confidence']
+            segments.append(segment)
 
         return segments
 
@@ -229,17 +409,22 @@ class TranscriptionService:
             seg_end = segment['end']
             seg_text = segment['text'].strip()
 
-            # Find overlapping speaker
-            speaker = self._find_speaker_for_segment(
+            # Find overlapping speaker (now returns tuple with confidence)
+            speaker_info = self._find_speaker_for_segment(
                 seg_start, seg_end, diarization_segments
             )
 
-            merged_segments.append({
+            merged_segment = {
                 'start': seg_start,
                 'end': seg_end,
                 'text': seg_text,
-                'speaker': speaker
-            })
+                'speaker': speaker_info['speaker']
+            }
+            # Include confidence if available
+            if 'confidence' in speaker_info:
+                merged_segment['speaker_confidence'] = speaker_info['confidence']
+
+            merged_segments.append(merged_segment)
 
         return merged_segments
 
@@ -248,7 +433,7 @@ class TranscriptionService:
         start: float,
         end: float,
         diarization_segments: List[Dict]
-    ) -> str:
+    ) -> Dict:
         """
         Find the speaker with the most overlap for a given time segment.
 
@@ -258,10 +443,10 @@ class TranscriptionService:
             diarization_segments: List of speaker segments
 
         Returns:
-            Speaker label with most overlap, or "UNKNOWN" if none found
+            Dictionary with speaker label and confidence (if available)
         """
         max_overlap = 0
-        best_speaker = "UNKNOWN"
+        best_speaker_info = {"speaker": "UNKNOWN"}
 
         for dia_seg in diarization_segments:
             # Calculate overlap
@@ -271,9 +456,12 @@ class TranscriptionService:
 
             if overlap > max_overlap:
                 max_overlap = overlap
-                best_speaker = dia_seg['speaker']
+                best_speaker_info = {"speaker": dia_seg['speaker']}
+                # Include confidence if available
+                if 'confidence' in dia_seg:
+                    best_speaker_info['confidence'] = dia_seg['confidence']
 
-        return best_speaker
+        return best_speaker_info
 
     def transcribe_with_speakers(
         self,
@@ -303,60 +491,88 @@ class TranscriptionService:
         print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
         print(f"[TRANSCRIPTION] Input file: {video_path}")
 
-        # Step 1: Transcribe with Whisper
+        # Step 0: Extract audio to WAV format once (for both Whisper and pyannote)
         if recording_id:
             import database as db
-            db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
+            db.update_transcription_progress(recording_id, {'stage': 'extraction', 'step': 'extracting'})
 
-        transcription = self.transcribe_audio(video_path, recording_id=recording_id, segment_number=segment_number)
+        audio_wav_path = self.extract_audio_to_wav(video_path, recording_id=recording_id, segment_number=segment_number)
 
-        # Step 2: Perform speaker diarization
-        if recording_id:
-            import database as db
-            db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
+        try:
+            # Step 1: Transcribe with Whisper
+            if recording_id:
+                import database as db
+                db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
 
-        diarization_segments = self.perform_diarization(video_path, recording_id=recording_id, segment_number=segment_number)
+            transcription = self.transcribe_audio(audio_wav_path, recording_id=recording_id, segment_number=segment_number)
 
-        # Step 3: Merge results
-        if recording_id:
-            import database as db
-            prefix = f"Segment {segment_number}: " if segment_number else ""
-            db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
-            db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
+            # Step 2: Perform speaker diarization
+            if recording_id:
+                import database as db
+                db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
 
-        merged_segments = self.merge_transcription_and_diarization(
-            transcription, diarization_segments
-        )
+            diarization_segments = self.perform_diarization(audio_wav_path, recording_id=recording_id, segment_number=segment_number)
 
-        if recording_id:
-            db.add_transcription_log(recording_id, f'{prefix}Merge completed', 'info')
+            # Save raw diarization data for review (includes confidence scores)
+            if save_to_file:
+                diarization_output_path = video_path + '.diarization.json'
+                with open(diarization_output_path, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'file': video_path,
+                        'segments': diarization_segments,
+                        'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
+                    }, f, indent=2, ensure_ascii=False)
+                print(f"[TRANSCRIPTION] Raw diarization data saved to: {diarization_output_path}")
 
-        # Prepare final output
-        result = {
-            'file': video_path,
-            'language': transcription.get('language', 'en'),
-            'segments': merged_segments,
-            'full_text': transcription['text'],
-            'num_speakers': len(set(seg['speaker'] for seg in merged_segments))
-        }
+            # Step 3: Merge results
+            if recording_id:
+                import database as db
+                prefix = f"Segment {segment_number}: " if segment_number else ""
+                db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
+                db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
 
-        # Save to file if requested
-        if save_to_file:
-            if output_path is None:
-                output_path = video_path + '.transcript.json'
+            merged_segments = self.merge_transcription_and_diarization(
+                transcription, diarization_segments
+            )
 
             if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Saving transcript to file', 'info')
+                db.add_transcription_log(recording_id, f'{prefix}Merge completed', 'info')
 
-            self.save_transcript(result, output_path)
+            # Prepare final output
+            result = {
+                'file': video_path,
+                'language': transcription.get('language', 'en'),
+                'segments': merged_segments,
+                'full_text': transcription['text'],
+                'num_speakers': len(set(seg['speaker'] for seg in merged_segments))
+            }
 
-        print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+            # Save to file if requested
+            if save_to_file:
+                if output_path is None:
+                    output_path = video_path + '.transcript.json'
 
-        if recording_id:
-            db.add_transcription_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
-            db.add_recording_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+                if recording_id:
+                    db.add_transcription_log(recording_id, f'{prefix}Saving transcript to file', 'info')
 
-        return result
+                self.save_transcript(result, output_path)
+
+            print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+                db.add_recording_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
+
+            return result
+
+        finally:
+            # Clean up WAV file even on errors
+            if os.path.exists(audio_wav_path):
+                try:
+                    os.remove(audio_wav_path)
+                    print(f"[TRANSCRIPTION] Cleaned up audio file: {audio_wav_path}")
+                except OSError as e:
+                    print(f"[TRANSCRIPTION] Warning: Could not remove audio file: {e}")
 
     def save_transcript(self, transcript: Dict, output_path: str):
         """

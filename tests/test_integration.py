@@ -338,7 +338,7 @@ class TestTranscriptionIntegration:
         mock_update_transcript.assert_called_once()
 
     @patch('services.ENABLE_TRANSCRIPTION', True)
-    @patch('services.HUGGINGFACE_TOKEN', None)
+    @patch('services.PYANNOTE_API_TOKEN', None)
     @patch('services.subprocess.Popen')
     @patch('services.db.create_recording')
     @patch('services.db.update_recording')

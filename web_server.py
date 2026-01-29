@@ -11,6 +11,7 @@ from config import CALGARY_TZ, WEB_HOST, WEB_PORT
 import os
 from post_processor import PostProcessor
 import threading
+from shared_state import monitoring_state
 
 app = Flask(__name__)
 
@@ -89,6 +90,9 @@ def index():
     recent_recordings = db.get_recent_recordings(limit=10)
     formatted_recordings = format_recordings(recent_recordings)
 
+    # Get monitoring status
+    monitoring_enabled = monitoring_state.enabled
+
     # Current time
     now = datetime.now(CALGARY_TZ).strftime('%Y-%m-%d %H:%M:%S %Z')
 
@@ -98,6 +102,7 @@ def index():
         stats=stats,
         meetings=meetings,
         recordings=formatted_recordings,
+        monitoring_enabled=monitoring_enabled,
         now=now
     )
 
@@ -224,6 +229,34 @@ def api_stop_recording():
         }), 500
 
 
+@app.route('/api/monitoring/start', methods=['POST'])
+def api_start_monitoring():
+    """API endpoint to start monitoring."""
+    monitoring_state.enable()
+    return jsonify({
+        'success': True,
+        'message': 'Monitoring started'
+    })
+
+
+@app.route('/api/monitoring/stop', methods=['POST'])
+def api_stop_monitoring():
+    """API endpoint to stop monitoring."""
+    monitoring_state.disable()
+    return jsonify({
+        'success': True,
+        'message': 'Monitoring stopped'
+    })
+
+
+@app.route('/api/monitoring/status', methods=['GET'])
+def api_monitoring_status():
+    """API endpoint to get monitoring status."""
+    return jsonify({
+        'monitoring_enabled': monitoring_state.enabled
+    })
+
+
 @app.route('/api/refresh-agenda', methods=['POST'])
 def api_refresh_agenda():
     """API endpoint to manually refresh the meeting agenda."""
@@ -331,6 +364,49 @@ def download_segment_transcript(segment_id):
         return send_file(transcript_path, as_attachment=True)
 
 
+@app.route('/download/diarization/<int:recording_id>')
+def download_recording_diarization(recording_id):
+    """Download diarization data (with confidence scores) for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    # Diarization file is saved alongside transcript
+    file_path = recording.get('file_path')
+    if not file_path:
+        return "Recording file path not found", 404
+
+    diarization_path = file_path + '.diarization.json'
+
+    if not os.path.exists(diarization_path):
+        return "Diarization file not found", 404
+
+    return send_file(diarization_path, as_attachment=True)
+
+
+@app.route('/download/diarization/segment/<int:segment_id>')
+def download_segment_diarization(segment_id):
+    """Download diarization data (with confidence scores) for a segment."""
+    segments = db.get_db_connection()
+
+    with segments as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+
+        if not row or not row['file_path']:
+            return "Segment not found", 404
+
+        file_path = row['file_path']
+        diarization_path = file_path + '.diarization.json'
+
+        if not os.path.exists(diarization_path):
+            return "Diarization file not found", 404
+
+        return send_file(diarization_path, as_attachment=True)
+
+
 @app.route('/api/recordings/stale', methods=['GET'])
 def api_get_stale_recordings():
     """API endpoint to get all stale recordings."""
@@ -422,7 +498,7 @@ def api_transcribe_recording(recording_id):
     # Run transcription in background thread
     def run_transcription():
         from transcription_service import TranscriptionService
-        from config import HUGGINGFACE_TOKEN, ENABLE_TRANSCRIPTION
+        from config import PYANNOTE_API_TOKEN, ENABLE_TRANSCRIPTION
 
         if not ENABLE_TRANSCRIPTION:
             db.update_transcription_status(recording_id, 'skipped', 'Transcription disabled in config')
@@ -434,7 +510,7 @@ def api_transcribe_recording(recording_id):
             db.add_transcription_log(recording_id, 'Starting transcription process', 'info')
             db.add_recording_log(recording_id, 'Starting transcription process', 'info')
 
-            transcription_service = TranscriptionService(hf_token=HUGGINGFACE_TOKEN)
+            transcription_service = TranscriptionService(pyannote_api_token=PYANNOTE_API_TOKEN)
 
             # Check if recording has segments
             segments = db.get_segments_by_recording(recording_id)

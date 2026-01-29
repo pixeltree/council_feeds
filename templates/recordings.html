@@ -19,6 +19,32 @@
             animation: spin 0.8s linear infinite;
         }
     </style>
+    <script>
+        // Auto-refresh every 10 seconds with pause-on-hover and visibility checks
+        document.addEventListener('DOMContentLoaded', function () {
+            var refreshEnabled = true;
+
+            // Pause auto-refresh while the user is hovering over the page
+            var body = document.body;
+            if (body) {
+                body.addEventListener('mouseenter', function () {
+                    refreshEnabled = false;
+                });
+                body.addEventListener('mouseleave', function () {
+                    refreshEnabled = true;
+                });
+            }
+
+            // Periodically refresh the page, but only when appropriate
+            setInterval(function () {
+                // Do not refresh if the user is interacting (hovering) or the page is hidden
+                if (!refreshEnabled || document.hidden) {
+                    return;
+                }
+                location.reload();
+            }, 10000);
+        });
+    </script>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
     <div class="max-w-7xl mx-auto">
@@ -141,6 +167,11 @@
                                    title="Download transcript">
                                     📄 Transcript
                                 </a>
+                                <a href="/download/diarization/{{ recording.id }}"
+                                   class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm"
+                                   title="Download diarization data with confidence scores">
+                                    🎯 Diarization
+                                </a>
                             {% endif %}
 
                             {% if recording.status == 'completed' %}
@@ -219,6 +250,11 @@
                                            class="px-3 py-1.5 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm"
                                            title="Download segment transcript">
                                             📄 Transcript
+                                        </a>
+                                        <a href="/download/diarization/segment/{{ segment.id }}"
+                                           class="px-3 py-1.5 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm"
+                                           title="Download diarization data with confidence scores">
+                                            🎯 Diarization
                                         </a>
                                     {% endif %}
                                 </div>
