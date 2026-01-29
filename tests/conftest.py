@@ -22,6 +22,15 @@ sys.modules['torch'] = mock_torch
 sys.modules['pyannote'] = mock_pyannote
 sys.modules['pyannote.audio'] = mock_pyannote_audio
 
+# Mock Gemini AI dependencies
+mock_google = MagicMock()
+mock_genai = MagicMock()
+mock_genai_types = MagicMock()
+
+sys.modules['google'] = mock_google
+sys.modules['google.generativeai'] = mock_genai
+sys.modules['google.generativeai.types'] = mock_genai_types
+
 
 @pytest.fixture
 def temp_db_path(tmp_path):

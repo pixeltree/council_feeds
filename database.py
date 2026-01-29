@@ -239,6 +239,16 @@ def init_database():
         if 'transcription_logs' not in columns:
             cursor.execute("ALTER TABLE recordings ADD COLUMN transcription_logs TEXT")  # JSON array of log messages
 
+        # Migration: Add diarization file path columns to recordings table (for Gemini feature)
+        if 'diarization_pyannote_path' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_pyannote_path TEXT")
+        if 'diarization_gemini_path' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_gemini_path TEXT")
+
+        # Migration: Add speaker list column to recordings table
+        if 'speakers' not in columns:
+            cursor.execute("ALTER TABLE recordings ADD COLUMN speakers TEXT")  # JSON array of speaker info
+
 
 def save_meetings(meetings: List[Dict]) -> int:
     """
@@ -502,6 +512,23 @@ def update_recording_transcript(recording_id: int, transcript_path: str):
         """, (transcript_path, recording_id))
 
 
+def update_recording_diarization_paths(
+    recording_id: int,
+    pyannote_path: Optional[str] = None,
+    gemini_path: Optional[str] = None
+):
+    """Update recording with diarization file paths."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE recordings
+            SET diarization_pyannote_path = ?,
+                diarization_gemini_path = ?
+            WHERE id = ?
+        """, (pyannote_path, gemini_path, recording_id))
+
+
 def get_recent_recordings(limit: int = 10) -> List[Dict]:
     """Get recent recordings with meeting details."""
     with get_db_connection() as conn:
@@ -581,6 +608,9 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 r.transcription_error,
                 r.transcription_progress,
                 r.transcription_logs,
+                r.diarization_pyannote_path,
+                r.diarization_gemini_path,
+                r.speakers,
                 m.id as meeting_id,
                 m.title as meeting_title,
                 m.meeting_datetime
@@ -609,6 +639,9 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 'transcription_error': row['transcription_error'],
                 'transcription_progress': row['transcription_progress'],
                 'transcription_logs': row['transcription_logs'],
+                'diarization_pyannote_path': row['diarization_pyannote_path'],
+                'diarization_gemini_path': row['diarization_gemini_path'],
+                'speakers': row['speakers'],
                 'meeting_id': row['meeting_id'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']
@@ -1082,6 +1115,49 @@ def get_recording_logs(recording_id: int, limit: int = 100) -> List[Dict]:
             })
 
         return logs
+
+
+def update_recording_speakers(recording_id: int, speakers: List[Dict[str, str]]):
+    """Update recording with speaker list from meeting agenda.
+
+    Args:
+        recording_id: Recording ID
+        speakers: List of speaker dictionaries from agenda parser
+    """
+    import json
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE recordings
+            SET speakers = ?
+            WHERE id = ?
+        """, (json.dumps(speakers), recording_id))
+
+
+def get_recording_speakers(recording_id: int) -> List[Dict[str, str]]:
+    """Get speaker list for a recording.
+
+    Args:
+        recording_id: Recording ID
+
+    Returns:
+        List of speaker dictionaries, or empty list if none
+    """
+    import json
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT speakers FROM recordings WHERE id = ?", (recording_id,))
+        row = cursor.fetchone()
+
+        if row and row['speakers']:
+            try:
+                return json.loads(row['speakers'])
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return []
+
+        return []
 
 
 def delete_recording(recording_id: int) -> bool:

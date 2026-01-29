@@ -93,3 +93,11 @@ STATIC_MIN_GROWTH_KB = int(os.getenv("STATIC_MIN_GROWTH_KB", "10"))  # Minimum K
 STATIC_CHECK_INTERVAL = int(os.getenv("STATIC_CHECK_INTERVAL", "30"))  # Seconds between checks
 STATIC_MAX_FAILURES = int(os.getenv("STATIC_MAX_FAILURES", "3"))  # Consecutive failures before stopping
 STATIC_SCENE_THRESHOLD = int(os.getenv("STATIC_SCENE_THRESHOLD", "200"))  # Minimum scene changes for active content
+
+# Gemini API settings (for speaker diarization refinement)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", None)
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+ENABLE_GEMINI_REFINEMENT = (
+    os.getenv("ENABLE_GEMINI_REFINEMENT", "true").lower() == "true"
+    and GEMINI_API_KEY is not None
+)

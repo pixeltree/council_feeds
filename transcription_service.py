@@ -491,6 +491,9 @@ class TranscriptionService:
         print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
         print(f"[TRANSCRIPTION] Input file: {video_path}")
 
+        # Prepare log prefix for segment logging
+        prefix = f"Segment {segment_number}: " if segment_number else ""
+
         # Step 0: Extract audio to WAV format once (for both Whisper and pyannote)
         if recording_id:
             import database as db
@@ -513,16 +516,168 @@ class TranscriptionService:
 
             diarization_segments = self.perform_diarization(audio_wav_path, recording_id=recording_id, segment_number=segment_number)
 
-            # Save raw diarization data for review (includes confidence scores)
+            # Create pyannote diarization JSON structure
+            pyannote_diarization = {
+                'file': video_path,
+                'segments': diarization_segments,
+                'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
+            }
+
+            # Save pyannote diarization data (original output from pyannote API)
+            pyannote_path = None
             if save_to_file:
-                diarization_output_path = video_path + '.diarization.json'
-                with open(diarization_output_path, 'w', encoding='utf-8') as f:
-                    json.dump({
-                        'file': video_path,
-                        'segments': diarization_segments,
-                        'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
-                    }, f, indent=2, ensure_ascii=False)
-                print(f"[TRANSCRIPTION] Raw diarization data saved to: {diarization_output_path}")
+                pyannote_path = video_path + '.diarization.pyannote.json'
+                with open(pyannote_path, 'w', encoding='utf-8') as f:
+                    json.dump(pyannote_diarization, f, indent=2, ensure_ascii=False)
+                print(f"[TRANSCRIPTION] Pyannote diarization saved: {pyannote_path}")
+
+            # Attempt Gemini refinement if enabled
+            gemini_diarization = None
+            gemini_path = None
+            final_diarization = pyannote_diarization  # Default to pyannote
+
+            from config import ENABLE_GEMINI_REFINEMENT, GEMINI_API_KEY, GEMINI_MODEL
+
+            if ENABLE_GEMINI_REFINEMENT:
+                try:
+                    # Get meeting context if recording_id available
+                    meeting_link = None
+                    meeting_title = "Council Meeting"
+
+                    if recording_id:
+                        import database as db
+                        recording = db.get_recording_by_id(recording_id)
+                        if recording and recording.get('meeting_id'):
+                            # Get meeting details
+                            with db.get_db_connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    "SELECT title, link FROM meetings WHERE id = ?",
+                                    (recording['meeting_id'],)
+                                )
+                                meeting_row = cursor.fetchone()
+                                if meeting_row:
+                                    meeting_title = meeting_row['title'] or meeting_title
+                                    meeting_link = meeting_row['link']
+
+                        db.add_transcription_log(
+                            recording_id,
+                            f'{prefix}Attempting Gemini speaker refinement',
+                            'info'
+                        )
+
+                    # Extract expected speakers from meeting agenda
+                    expected_speakers = []
+                    if meeting_link:
+                        print(f"[TRANSCRIPTION] Extracting speakers from agenda: {meeting_link}")
+                        if recording_id:
+                            db.add_transcription_log(
+                                recording_id,
+                                f'{prefix}Fetching speaker list from meeting agenda',
+                                'info'
+                            )
+
+                        import agenda_parser
+                        expected_speakers = agenda_parser.extract_speakers(meeting_link)
+
+                        if expected_speakers:
+                            print(f"[TRANSCRIPTION] Found {len(expected_speakers)} expected speakers from agenda")
+                            if recording_id:
+                                db.add_transcription_log(
+                                    recording_id,
+                                    f'{prefix}Found {len(expected_speakers)} expected speakers from agenda',
+                                    'info'
+                                )
+                                # Save speaker list to database
+                                db.update_recording_speakers(recording_id, expected_speakers)
+                        else:
+                            print("[TRANSCRIPTION] No speakers found in agenda, will use context only")
+                            if recording_id:
+                                db.add_transcription_log(
+                                    recording_id,
+                                    f'{prefix}No speakers found in agenda',
+                                    'warning'
+                                )
+                    else:
+                        print("[TRANSCRIPTION] No meeting link available for agenda extraction")
+                        if recording_id:
+                            db.add_transcription_log(
+                                recording_id,
+                                f'{prefix}No meeting link available for agenda extraction',
+                                'warning'
+                            )
+
+                    # Call Gemini refinement
+                    print("[TRANSCRIPTION] Requesting Gemini speaker refinement")
+                    import gemini_service
+
+                    gemini_diarization = gemini_service.refine_diarization(
+                        pyannote_diarization,
+                        expected_speakers,
+                        meeting_title,
+                        api_key=GEMINI_API_KEY,
+                        model=GEMINI_MODEL
+                    )
+
+                    # Check if refinement actually happened (Gemini adds metadata)
+                    if gemini_diarization.get('refined_by') == 'gemini':
+                        print("[TRANSCRIPTION] Gemini refinement completed successfully")
+                        if recording_id:
+                            db.add_transcription_log(
+                                recording_id,
+                                f'{prefix}Gemini refinement completed',
+                                'info'
+                            )
+
+                        # Save Gemini-refined diarization
+                        if save_to_file:
+                            gemini_path = video_path + '.diarization.gemini.json'
+                            with open(gemini_path, 'w', encoding='utf-8') as f:
+                                json.dump(gemini_diarization, f, indent=2, ensure_ascii=False)
+                            print(f"[TRANSCRIPTION] Gemini-refined diarization saved: {gemini_path}")
+
+                        # Use Gemini version for final transcript
+                        final_diarization = gemini_diarization
+                        # Extract segments for merging (handle both formats)
+                        diarization_segments = final_diarization.get('segments', final_diarization.get('diarization', []))
+
+                        print("[TRANSCRIPTION] Using Gemini-refined diarization for transcript")
+                        if recording_id:
+                            db.add_transcription_log(
+                                recording_id,
+                                f'{prefix}Using Gemini-refined speaker labels for transcript',
+                                'info'
+                            )
+                    else:
+                        print("[TRANSCRIPTION] Gemini refinement returned original (no changes)")
+                        if recording_id:
+                            db.add_transcription_log(
+                                recording_id,
+                                f'{prefix}Using pyannote speaker labels (Gemini made no changes)',
+                                'warning'
+                            )
+
+                except Exception as e:
+                    print(f"[TRANSCRIPTION] Gemini refinement failed: {e}")
+                    if recording_id:
+                        db.add_transcription_log(
+                            recording_id,
+                            f'{prefix}Gemini refinement failed: {e}',
+                            'warning'
+                        )
+                    print("[TRANSCRIPTION] Using pyannote diarization as fallback")
+
+            # Update database with diarization paths if recording_id available
+            if recording_id and save_to_file:
+                import database as db
+                db.update_recording_diarization_paths(recording_id, pyannote_path, gemini_path)
+
+            # Also save for backward compatibility (use best available version)
+            if save_to_file:
+                legacy_path = video_path + '.diarization.json'
+                with open(legacy_path, 'w', encoding='utf-8') as f:
+                    json.dump(final_diarization, f, indent=2, ensure_ascii=False)
+                print(f"[TRANSCRIPTION] Legacy diarization saved: {legacy_path}")
 
             # Step 3: Merge results
             if recording_id:

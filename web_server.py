@@ -151,8 +151,21 @@ def recording_detail(recording_id):
     start_time = db.parse_datetime_from_db(recording['start_time']) if recording['start_time'] else None
     end_time = db.parse_datetime_from_db(recording['end_time']) if recording['end_time'] else None
 
+    # Get meeting link if available
+    meeting_link = None
+    meeting_id = recording.get('meeting_id')
+    if meeting_id:
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT link FROM meetings WHERE id = ?", (meeting_id,))
+            row = cursor.fetchone()
+            if row:
+                meeting_link = row['link']
+
     formatted_recording = {
         'id': recording['id'],
+        'meeting_id': meeting_id,
+        'meeting_link': meeting_link,
         'meeting_title': recording['meeting_title'] or 'Council Meeting',
         'start_time': start_time.strftime('%Y-%m-%d %H:%M') if start_time else 'Unknown',
         'end_time': end_time.strftime('%Y-%m-%d %H:%M') if end_time else None,
@@ -164,11 +177,32 @@ def recording_detail(recording_id):
         'transcript_path': recording['transcript_path'],
         'file_path': recording['file_path'],
         'post_process_status': recording.get('post_process_status'),
-        'post_process_error': recording.get('post_process_error')
+        'post_process_error': recording.get('post_process_error'),
+        'diarization_pyannote_path': recording.get('diarization_pyannote_path'),
+        'diarization_gemini_path': recording.get('diarization_gemini_path')
     }
 
     # Get segments
     segments = db.get_segments_by_recording(recording_id)
+
+    # Add diarization file existence checks for each segment
+    for segment in segments:
+        if segment.get('file_path'):
+            file_path = segment['file_path']
+            segment['has_diarization_pyannote'] = os.path.exists(file_path + '.diarization.pyannote.json')
+            segment['has_diarization_gemini'] = os.path.exists(file_path + '.diarization.gemini.json')
+            # Check legacy format too
+            segment['has_diarization_legacy'] = os.path.exists(file_path + '.diarization.json')
+            segment['has_any_diarization'] = (
+                segment['has_diarization_pyannote'] or
+                segment['has_diarization_gemini'] or
+                segment['has_diarization_legacy']
+            )
+        else:
+            segment['has_diarization_pyannote'] = False
+            segment['has_diarization_gemini'] = False
+            segment['has_diarization_legacy'] = False
+            segment['has_any_diarization'] = False
 
     # Get logs in reverse chronological order
     logs = db.get_recording_logs(recording_id, limit=200)
@@ -366,31 +400,90 @@ def download_segment_transcript(segment_id):
 
 @app.route('/download/diarization/<int:recording_id>')
 def download_recording_diarization(recording_id):
-    """Download diarization data (with confidence scores) for a recording."""
+    """Download diarization data (prefers Gemini-refined, falls back to pyannote)."""
     recording = db.get_recording_by_id(recording_id)
 
     if not recording:
         return "Recording not found", 404
 
-    # Diarization file is saved alongside transcript
+    # Try Gemini-refined first
+    gemini_path = recording.get('diarization_gemini_path')
+    if gemini_path and os.path.exists(gemini_path):
+        print(f"[WEB] Serving gemini diarization for recording {recording_id}")
+        return send_file(gemini_path, as_attachment=True)
+
+    # Fall back to pyannote
+    pyannote_path = recording.get('diarization_pyannote_path')
+    if pyannote_path and os.path.exists(pyannote_path):
+        print(f"[WEB] Serving pyannote diarization for recording {recording_id}")
+        return send_file(pyannote_path, as_attachment=True)
+
+    # Fall back to legacy path
     file_path = recording.get('file_path')
-    if not file_path:
-        return "Recording file path not found", 404
+    if file_path:
+        legacy_path = file_path + '.diarization.json'
+        if os.path.exists(legacy_path):
+            print(f"[WEB] Serving legacy diarization for recording {recording_id}")
+            return send_file(legacy_path, as_attachment=True)
 
-    diarization_path = file_path + '.diarization.json'
+    print(f"[WEB] Diarization file not found for recording {recording_id}")
+    return "Diarization file not found", 404
 
-    if not os.path.exists(diarization_path):
-        return "Diarization file not found", 404
 
-    return send_file(diarization_path, as_attachment=True)
+@app.route('/download/diarization/pyannote/<int:recording_id>')
+def download_recording_diarization_pyannote(recording_id):
+    """Download pyannote diarization data for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    pyannote_path = recording.get('diarization_pyannote_path')
+    if pyannote_path and os.path.exists(pyannote_path):
+        print(f"[WEB] Serving pyannote diarization for recording {recording_id}")
+        return send_file(pyannote_path, as_attachment=True)
+
+    # Fall back to trying file_path based path
+    file_path = recording.get('file_path')
+    if file_path:
+        fallback_path = file_path + '.diarization.pyannote.json'
+        if os.path.exists(fallback_path):
+            return send_file(fallback_path, as_attachment=True)
+
+    print(f"[WEB] Pyannote diarization file not found for recording {recording_id}")
+    return "Pyannote diarization file not found", 404
+
+
+@app.route('/download/diarization/gemini/<int:recording_id>')
+def download_recording_diarization_gemini(recording_id):
+    """Download Gemini-refined diarization data for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    gemini_path = recording.get('diarization_gemini_path')
+    if gemini_path and os.path.exists(gemini_path):
+        print(f"[WEB] Serving gemini diarization for recording {recording_id}")
+        return send_file(gemini_path, as_attachment=True)
+
+    # Fall back to trying file_path based path
+    file_path = recording.get('file_path')
+    if file_path:
+        fallback_path = file_path + '.diarization.gemini.json'
+        if os.path.exists(fallback_path):
+            return send_file(fallback_path, as_attachment=True)
+
+    print(f"[WEB] Gemini diarization file not found for recording {recording_id}")
+    return "Gemini diarization file not found", 404
 
 
 @app.route('/download/diarization/segment/<int:segment_id>')
 def download_segment_diarization(segment_id):
-    """Download diarization data (with confidence scores) for a segment."""
-    segments = db.get_db_connection()
+    """Download diarization data for a segment (prefers Gemini, falls back to pyannote)."""
+    conn = db.get_db_connection()
 
-    with segments as conn:
+    with conn:
         cursor = conn.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
@@ -399,12 +492,67 @@ def download_segment_diarization(segment_id):
             return "Segment not found", 404
 
         file_path = row['file_path']
-        diarization_path = file_path + '.diarization.json'
 
-        if not os.path.exists(diarization_path):
-            return "Diarization file not found", 404
+        # Try Gemini first
+        gemini_path = file_path + '.diarization.gemini.json'
+        if os.path.exists(gemini_path):
+            return send_file(gemini_path, as_attachment=True)
 
-        return send_file(diarization_path, as_attachment=True)
+        # Try pyannote
+        pyannote_path = file_path + '.diarization.pyannote.json'
+        if os.path.exists(pyannote_path):
+            return send_file(pyannote_path, as_attachment=True)
+
+        # Fall back to legacy
+        legacy_path = file_path + '.diarization.json'
+        if os.path.exists(legacy_path):
+            return send_file(legacy_path, as_attachment=True)
+
+        return "Diarization file not found", 404
+
+
+@app.route('/download/diarization/pyannote/segment/<int:segment_id>')
+def download_segment_diarization_pyannote(segment_id):
+    """Download pyannote diarization data for a segment."""
+    conn = db.get_db_connection()
+
+    with conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+
+        if not row or not row['file_path']:
+            return "Segment not found", 404
+
+        file_path = row['file_path']
+        pyannote_path = file_path + '.diarization.pyannote.json'
+
+        if os.path.exists(pyannote_path):
+            return send_file(pyannote_path, as_attachment=True)
+
+        return "Pyannote diarization file not found", 404
+
+
+@app.route('/download/diarization/gemini/segment/<int:segment_id>')
+def download_segment_diarization_gemini(segment_id):
+    """Download Gemini-refined diarization data for a segment."""
+    conn = db.get_db_connection()
+
+    with conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
+        row = cursor.fetchone()
+
+        if not row or not row['file_path']:
+            return "Segment not found", 404
+
+        file_path = row['file_path']
+        gemini_path = file_path + '.diarization.gemini.json'
+
+        if os.path.exists(gemini_path):
+            return send_file(gemini_path, as_attachment=True)
+
+        return "Gemini diarization file not found", 404
 
 
 @app.route('/api/recordings/stale', methods=['GET'])
@@ -628,6 +776,81 @@ def api_get_transcription_status(recording_id):
         'progress': progress,
         'logs': logs
     })
+
+
+@app.route('/api/recordings/<int:recording_id>/speakers', methods=['GET'])
+def api_get_recording_speakers(recording_id):
+    """API endpoint to get speaker list for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    speakers = db.get_recording_speakers(recording_id)
+
+    return jsonify({
+        'success': True,
+        'speakers': speakers
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/speakers/fetch', methods=['POST'])
+def api_fetch_recording_speakers(recording_id):
+    """API endpoint to fetch speaker list from meeting agenda."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    # Get the meeting link
+    meeting_id = recording.get('meeting_id')
+    if not meeting_id:
+        return jsonify({'success': False, 'error': 'No meeting associated with this recording'}), 400
+
+    # Get meeting details
+    meeting = db.get_upcoming_meetings(limit=1000)  # Get all meetings
+    meeting_link = None
+    for m in meeting:
+        if m['id'] == meeting_id:
+            meeting_link = m.get('link')
+            break
+
+    # Also check past meetings
+    if not meeting_link:
+        with db.get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT link FROM meetings WHERE id = ?", (meeting_id,))
+            row = cursor.fetchone()
+            if row:
+                meeting_link = row['link']
+
+    if not meeting_link:
+        return jsonify({'success': False, 'error': 'No meeting agenda link available'}), 400
+
+    try:
+        # Extract speakers from agenda
+        import agenda_parser
+        speakers = agenda_parser.extract_speakers(meeting_link)
+
+        if speakers:
+            # Save to database
+            db.update_recording_speakers(recording_id, speakers)
+            return jsonify({
+                'success': True,
+                'message': f'Found {len(speakers)} speakers from meeting agenda',
+                'speakers': speakers
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'No speakers found in the meeting agenda'
+            }), 404
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Failed to fetch speakers: {str(e)}'
+        }), 500
 
 
 def run_server(host=None, port=None):
