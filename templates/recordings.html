@@ -156,7 +156,7 @@
                             {% if recording.status == 'completed' %}
                                 {% set pp_status = recording.post_process_status or 'pending' %}
                                 {% if pp_status == 'pending' or pp_status == 'failed' %}
-                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold text-sm"
+                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                             onclick="processRecording({{ recording.id }})"
                                             id="process-btn-{{ recording.id }}">
                                         {% if pp_status == 'failed' %}
@@ -169,7 +169,7 @@
 
                                 {% set trans_status = recording.transcription_status or 'pending' %}
                                 {% if trans_status == 'pending' or trans_status == 'failed' %}
-                                    <button class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition font-semibold text-sm"
+                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                             onclick="transcribeRecording({{ recording.id }})"
                                             id="transcribe-btn-{{ recording.id }}">
                                         {% if trans_status == 'failed' %}
@@ -182,7 +182,7 @@
                             {% endif %}
 
                             {% if recording.status == 'recording' or (recording.status == 'completed' and not recording.duration_minutes) %}
-                                <button class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition font-semibold text-sm"
+                                <button class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                         onclick="deleteRecording({{ recording.id }})"
                                         id="delete-btn-{{ recording.id }}"
                                         title="Delete stale recording">
