@@ -75,11 +75,17 @@ New files:
 ### Review Checklist:
 - [x] All tests passing (172 tests)
 - [x] No new linting errors
+- [x] Branch created and pushed: `refactor/logging-framework`
+- [x] Pull request created with detailed description
+- [x] Review requested from Copilot
+- [ ] Code review completed
 - [ ] Documentation updated
 - [ ] CI/CD passes
+- [ ] PR merged to main
 
 **PR Link:** https://github.com/pixeltree/council_feeds/pull/20
 **Completed:** 2026-01-29
+**Status:** Awaiting review
 
 ---
 
