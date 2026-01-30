@@ -204,7 +204,7 @@ class RecordingService:
 
         # Determine output paths
         output_file, output_pattern, format_ext = self.path_manager.determine_output_paths(timestamp)
-        self.path_manager.ensure_output_directory()
+        self.path_manager.ensure_output_directory(output_file)
 
         if output_pattern:
             self.logger.info(f"Starting segmented recording: {output_pattern}")

@@ -30,24 +30,36 @@ class RecordingPathManager:
         """
         format_ext = RECORDING_FORMAT if RECORDING_FORMAT in ['mkv', 'mp4', 'ts'] else 'mkv'
 
+        # Create subfolder for this recording
+        recording_folder = os.path.join(self.output_dir, f"council_meeting_{timestamp}")
+
         if ENABLE_SEGMENTED_RECORDING:
             output_pattern = os.path.join(
-                self.output_dir,
+                recording_folder,
                 f"council_meeting_{timestamp}_segment_%03d.{format_ext}"
             )
             output_file = os.path.join(
-                self.output_dir,
+                recording_folder,
                 f"council_meeting_{timestamp}.{format_ext}"
             )
         else:
             output_file = os.path.join(
-                self.output_dir,
+                recording_folder,
                 f"council_meeting_{timestamp}.{format_ext}"
             )
             output_pattern = None
 
         return output_file, output_pattern, format_ext
 
-    def ensure_output_directory(self) -> None:
-        """Ensure the output directory exists."""
-        os.makedirs(self.output_dir, exist_ok=True)
+    def ensure_output_directory(self, recording_path: Optional[str] = None) -> None:
+        """Ensure the output directory exists.
+
+        Args:
+            recording_path: Optional specific recording path to ensure directory for
+        """
+        if recording_path:
+            # Create the parent directory for the specific recording
+            os.makedirs(os.path.dirname(recording_path), exist_ok=True)
+        else:
+            # Create the base output directory
+            os.makedirs(self.output_dir, exist_ok=True)
