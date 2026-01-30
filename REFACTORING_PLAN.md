@@ -316,13 +316,13 @@ def _handle_recording_failure(self, recording_id: int, error: Exception) -> None
 - [ ] Documentation updated
 - [ ] CI/CD passes
 
-**PR Link:** https://github.com/pixeltree/council_feeds/pull/22
-**Completed:** 2026-01-29
-**Status:** Merged to main
-
 ---
 
 ## PR #4 Results
+
+**PR Link:** https://github.com/pixeltree/council_feeds/pull/23
+**Completed:** 2026-01-29
+**Status:** Ready for review
 
 ### Actual Changes Made:
 - Extracted 9 focused helper methods from `record_stream()`

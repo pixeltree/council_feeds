@@ -463,7 +463,8 @@ class RecordingService:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=15
+                timeout=15,
+                check=True
             )
 
             mean_volume = None
@@ -521,7 +522,11 @@ class RecordingService:
         if process.poll() is None:
             self.logger.warning("ffmpeg did not stop gracefully, forcing kill...")
             process.kill()
-            time.sleep(1)
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.logger.error("Process did not terminate after kill signal")
+                pass
 
     def _validate_recording_content(self, output_file: str, recording_id: int, end_time: datetime) -> bool:
         """Validate that recording has audio content and remove if empty.
@@ -539,7 +544,7 @@ class RecordingService:
             self.logger.info("Checking if recording has audio content...")
             mean_volume, max_volume = self._check_audio_levels(output_file)
 
-            if mean_volume and max_volume:
+            if mean_volume is not None and max_volume is not None:
                 self.logger.info(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
                 # If audio is reasonably loud, it has content
                 if mean_volume > -50 or max_volume > -30:
@@ -701,7 +706,7 @@ class RecordingService:
                         self.logger.debug(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
 
                         # If audio is very quiet, likely static placeholder
-                        if mean_volume and max_volume:
+                        if mean_volume is not None and max_volume is not None:
                             if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
                                 static_checks += 1
                                 self.logger.warning(f"Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
