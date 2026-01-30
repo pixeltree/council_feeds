@@ -81,8 +81,18 @@ class TestVodImportUI:
         # Should have some element for showing errors
         assert b'error' in response.data.lower() or b'alert' in response.data.lower()
 
-    def test_import_vod_link_in_navigation(self, client):
+    @patch('web_server.db.get_recent_recordings')
+    @patch('web_server.db.get_upcoming_meetings')
+    @patch('web_server.db.get_recording_stats')
+    @patch('web_server.get_current_recording')
+    def test_import_vod_link_in_navigation(self, mock_current_recording, mock_stats, mock_meetings, mock_recordings, client):
         """Test that the main page has a link to the import page."""
+        # Mock database calls that index page makes
+        mock_current_recording.return_value = None
+        mock_stats.return_value = {'total_recordings': 0, 'completed': 0, 'failed': 0, 'total_size_gb': 0}
+        mock_meetings.return_value = []
+        mock_recordings.return_value = []
+
         response = client.get('/')
 
         assert response.status_code == 200
@@ -170,8 +180,18 @@ class TestVodImportUIIntegration:
 class TestVodImportUIUserFlow:
     """Test complete user flow for VOD import via UI."""
 
-    def test_user_flow_navigation_to_import_page(self, client):
+    @patch('web_server.db.get_recent_recordings')
+    @patch('web_server.db.get_upcoming_meetings')
+    @patch('web_server.db.get_recording_stats')
+    @patch('web_server.get_current_recording')
+    def test_user_flow_navigation_to_import_page(self, mock_current_recording, mock_stats, mock_meetings, mock_recordings, client):
         """Test user can navigate from main page to import page."""
+        # Mock database calls that index page makes
+        mock_current_recording.return_value = None
+        mock_stats.return_value = {'total_recordings': 0, 'completed': 0, 'failed': 0, 'total_size_gb': 0}
+        mock_meetings.return_value = []
+        mock_recordings.return_value = []
+
         # Step 1: User visits main page
         response = client.get('/')
         assert response.status_code == 200
