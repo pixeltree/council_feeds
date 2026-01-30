@@ -26,7 +26,7 @@
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
     <div class="max-w-7xl mx-auto">
         <!-- Header -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg flex flex-col md:flex-row justify-between items-start gap-4">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg flex flex-col md:flex-row justify-between items-start gap-4">
             <div class="flex-1">
                 <h1 class="text-gray-800 text-3xl font-bold mb-2">{{ recording.meeting_title }}</h1>
                 <div class="text-gray-600 text-sm space-y-1">
@@ -72,10 +72,10 @@
         </div>
 
         <!-- Recording Info Card -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">Recording Information</h2>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div class="bg-gray-50 p-4 rounded-lg">
                     <div class="text-gray-600 text-sm mb-2">Status</div>
                     <div class="inline-flex items-center gap-2">
@@ -150,7 +150,7 @@
 
         <!-- Transcription Progress Card -->
         {% if recording.status == 'completed' %}
-        <div id="transcription-progress-card" class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div id="transcription-progress-card" class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">🎙️ Transcription Progress</h2>
                 <button id="transcribe-btn"
@@ -174,7 +174,7 @@
             </div>
         </div>
         {% else %}
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">🎙️ Transcription</h2>
             <div class="text-center py-10 text-gray-500">
                 <div class="text-5xl mb-4">⏳</div>
@@ -184,7 +184,7 @@
         {% endif %}
 
         <!-- Speakers Card -->
-        <div id="speakers-card" class="bg-white rounded-xl p-6 mb-5 shadow-lg hidden">
+        <div id="speakers-card" class="bg-white rounded-xl p-6 mb-8 shadow-lg hidden">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">🎤 Meeting Speakers</h2>
                 <button id="refresh-speakers-btn"
@@ -196,13 +196,13 @@
                     </span>
                 </button>
             </div>
-            <div id="speakers-content" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div id="speakers-content" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <!-- Speakers will be loaded here -->
             </div>
         </div>
 
         <!-- No Speakers Card (shown when no speakers available) -->
-        <div id="no-speakers-card" class="bg-white rounded-xl p-6 mb-5 shadow-lg hidden">
+        <div id="no-speakers-card" class="bg-white rounded-xl p-6 mb-8 shadow-lg hidden">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">🎤 Meeting Speakers</h2>
             <div class="text-center py-10 text-gray-500">
                 <div class="text-5xl mb-4">👥</div>
@@ -221,7 +221,7 @@
 
         <!-- Transcript Card -->
         {% if recording.has_transcript %}
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">📄 Transcript & Diarization</h2>
                 <div class="relative inline-block download-dropdown">
@@ -266,7 +266,7 @@
 
         <!-- Segments Card -->
         {% if recording.is_segmented and segments %}
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">
                 📊 Segments ({{ segments|length }})
             </h2>
@@ -345,7 +345,7 @@
             </div>
         </div>
         {% elif recording.status == 'completed' and not recording.is_segmented %}
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">📊 Segments</h2>
             <div class="text-center py-10 text-gray-500">
                 <div class="text-5xl mb-4">✂️</div>
@@ -363,7 +363,7 @@
 
         <!-- Logs Card -->
         {% if logs %}
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">📝 Processing Logs</h2>
 
             <div class="bg-gray-900 rounded-lg p-4 overflow-auto max-h-96">

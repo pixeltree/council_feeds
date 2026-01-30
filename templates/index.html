@@ -180,7 +180,7 @@
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
     <div class="max-w-6xl mx-auto">
         <!-- Header -->
-        <div class="bg-white rounded-xl p-8 mb-5 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
+        <div class="bg-white rounded-xl p-8 mb-8 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
             <div>
                 <h1 class="text-gray-800 text-3xl md:text-4xl font-bold mb-2">Calgary Council Stream Recorder</h1>
                 <p class="text-gray-600 text-lg">Real-time monitoring and recording of Calgary City Council meetings</p>
@@ -191,7 +191,7 @@
         </div>
 
         <!-- Current Status Card -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">Current Status</h2>
                 <div class="flex gap-2">
@@ -242,7 +242,7 @@
         </div>
 
         <!-- Recording Statistics Card -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">Recording Statistics</h2>
                 <button id="cleanup-stale-button" onclick="cleanupStaleRecordings()" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
@@ -270,7 +270,7 @@
         </div>
 
         <!-- Upcoming Meetings Card -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">Upcoming Meetings</h2>
                 <button id="refresh-agenda-button" onclick="refreshAgenda()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
@@ -294,7 +294,7 @@
         </div>
 
         <!-- Recent Recordings Card -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">Recent Recordings</h2>
             {% if recordings %}
                 {% for recording in recordings %}
