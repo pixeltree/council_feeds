@@ -20,6 +20,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Copy application code (changes most frequently)
 COPY *.py ./
+COPY services/ ./services/
+COPY transcription/ ./transcription/
 COPY database/ ./database/
 COPY templates/ ./templates/
 

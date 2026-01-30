@@ -408,7 +408,7 @@ def get_unprocessed_recordings(limit: int = 50) -> List[Dict[str, Any]]:
 
 
 def get_stale_recordings() -> List[Dict]:
-    """Get recordings that are stale (status='recording' but file doesn't exist or has no content).
+    """Get recordings that are stale (file doesn't exist, stuck in 'recording' status, or has no content).
 
     Returns:
         List of stale recording dictionaries with file existence check
@@ -416,6 +416,7 @@ def get_stale_recordings() -> List[Dict]:
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
+        # Get all recordings (we'll check file existence for each)
         cursor.execute("""
             SELECT
                 r.id,
@@ -428,8 +429,6 @@ def get_stale_recordings() -> List[Dict]:
                 m.title as meeting_title
             FROM recordings r
             LEFT JOIN meetings m ON r.meeting_id = m.id
-            WHERE r.status = 'recording'
-            OR (r.status = 'completed' AND (r.duration_seconds IS NULL OR r.duration_seconds = 0 OR r.file_size_bytes IS NULL OR r.file_size_bytes < 1000))
             ORDER BY r.start_time DESC
         """)
 
@@ -438,8 +437,22 @@ def get_stale_recordings() -> List[Dict]:
             file_exists = os.path.exists(row['file_path'])
             file_size = os.path.getsize(row['file_path']) if file_exists else 0
 
-            # Consider stale if file doesn't exist, or exists but is tiny (< 1KB)
-            is_stale = not file_exists or file_size < 1000
+            # Consider stale if:
+            # 1. File doesn't exist (regardless of status)
+            # 2. File exists but is tiny (< 1KB)
+            # 3. Status is 'recording' but file has no content
+            # 4. Status is 'completed' but has no meaningful data
+            is_stale = (
+                not file_exists or  # File missing
+                file_size < 1000 or  # File too small
+                row['status'] == 'recording' or  # Stuck in recording state
+                (row['status'] == 'completed' and (
+                    row['duration_seconds'] is None or
+                    row['duration_seconds'] == 0 or
+                    row['file_size_bytes'] is None or
+                    row['file_size_bytes'] < 1000
+                ))
+            )
 
             if is_stale:
                 stale_recordings.append({
