@@ -575,9 +575,9 @@ warn_no_return = True
 - [ ] Documentation updated (can be done separately)
 - [ ] CI/CD passes with mypy check
 
-**PR Link:** _[To be created]_
+**PR Link:** https://github.com/pixeltree/council_feeds/pull/26
 **Completed:** 2026-01-29
-**Status:** ✅ Complete - Ready for PR creation
+**Status:** ✅ Complete - Ready for review
 
 ---
 
