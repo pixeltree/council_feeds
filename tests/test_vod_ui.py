@@ -1,9 +1,8 @@
 """Unit tests for VOD import UI functionality."""
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 from datetime import datetime
-import web_server
 from web_server import app
 
 

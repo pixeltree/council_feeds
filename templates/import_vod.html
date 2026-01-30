@@ -39,7 +39,10 @@
             try {
                 const payload = { escriba_url: url };
                 if (title) payload.override_title = title;
-                if (date) payload.override_date = date;
+                if (date) {
+                    // Convert date to ISO format with default time (noon)
+                    payload.override_date = date + 'T12:00:00';
+                }
 
                 const response = await fetch('/api/recordings/import-vod', {
                     method: 'POST',
@@ -65,7 +68,7 @@
                     // Show error
                     document.getElementById('progress-section').classList.add('hidden');
                     document.getElementById('error-message').classList.remove('hidden');
-                    document.getElementById('error-text').textContent = result.error || 'Failed to start import';
+                    document.getElementById('error-text').textContent = result.message || 'Failed to start import';
                     submitButton.disabled = false;
                 }
             } catch (error) {
