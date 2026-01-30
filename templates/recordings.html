@@ -49,7 +49,7 @@
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
     <div class="max-w-7xl mx-auto">
         <!-- Header -->
-        <div class="bg-white rounded-xl p-6 mb-5 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg flex flex-col md:flex-row justify-between items-center gap-4">
             <h1 class="text-gray-800 text-3xl font-bold">Recordings</h1>
             <a href="/" class="text-indigo-600 font-semibold px-4 py-2 rounded-lg hover:bg-gray-50 transition">
                 ← Back to Dashboard
@@ -60,7 +60,7 @@
         <div class="bg-white rounded-xl p-6 shadow-lg">
             {% if recordings %}
                 {% for recording in recordings %}
-                <div class="border border-gray-200 rounded-lg p-5 mb-4 bg-gray-50" id="recording-{{ recording.id }}">
+                <div class="border border-gray-200 rounded-lg p-5 mb-4 bg-white hover:shadow-md transition" id="recording-{{ recording.id }}">
                     <!-- Recording Header -->
                     <div class="flex flex-col lg:flex-row justify-between items-start gap-4 mb-3">
                         <div class="flex-1">
@@ -77,64 +77,31 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <div class="flex flex-wrap gap-2 items-center">
+                        <div class="inline-flex items-center gap-2">
+                            <!-- Primary status badge -->
                             <span class="px-3 py-1 rounded-full text-xs font-semibold
                                 {% if recording.status == 'completed' %}bg-green-100 text-green-700
                                 {% elif recording.status == 'failed' %}bg-red-100 text-red-700
                                 {% else %}bg-orange-100 text-orange-700{% endif %}">
-                                {{ recording.status.upper() }}
+                                {% if recording.status == 'completed' %}✓{% elif recording.status == 'failed' %}✕{% else %}⏳{% endif %}
+                                {{ recording.status.title() }}
                             </span>
 
-                            <!-- Post-processing status badge -->
+                            <!-- Secondary status indicators (subtle) -->
                             {% if recording.status == 'completed' %}
                                 {% set pp_status = recording.post_process_status or 'pending' %}
-                                <span class="px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1
-                                    {% if pp_status == 'completed' %}bg-blue-100 text-blue-700
-                                    {% elif pp_status == 'processing' %}bg-yellow-100 text-yellow-700
-                                    {% elif pp_status == 'failed' %}bg-red-100 text-red-700
-                                    {% else %}bg-gray-100 text-gray-600{% endif %}"
-                                    {% if recording.post_process_error %}title="Error: {{ recording.post_process_error }}"{% endif %}>
-                                    {% if pp_status == 'completed' %}
-                                        <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                                        <span>Segmented</span>
-                                    {% elif pp_status == 'processing' %}
-                                        <span class="loading"></span>
-                                        <span>Segmenting...</span>
-                                    {% elif pp_status == 'failed' %}
-                                        <span>⚠️</span>
-                                        <span>Segment failed</span>
-                                    {% else %}
-                                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                                        <span>Not segmented</span>
-                                    {% endif %}
+                                {% set trans_status = recording.transcription_status or 'pending' %}
+                                <span class="text-xs text-gray-600">
+                                    {% if pp_status == 'completed' %}• Segmented{% endif %}
+                                    {% if trans_status == 'completed' %} • Transcribed{% endif %}
                                 </span>
 
-                                <!-- Transcription status badge -->
-                                {% set trans_status = recording.transcription_status or 'pending' %}
-                                <span class="px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1
-                                    {% if trans_status == 'completed' %}bg-green-100 text-green-700
-                                    {% elif trans_status == 'processing' %}bg-yellow-100 text-yellow-700
-                                    {% elif trans_status == 'failed' %}bg-red-100 text-red-700
-                                    {% else %}bg-gray-100 text-gray-600{% endif %}"
-                                    {% if recording.transcription_error %}title="Error: {{ recording.transcription_error }}"{% endif %}
-                                    id="trans-status-{{ recording.id }}">
-                                    {% if trans_status == 'completed' %}
-                                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                                        <span>Transcribed</span>
-                                    {% elif trans_status == 'processing' %}
+                                <!-- Show processing status if actively processing -->
+                                {% if trans_status == 'processing' %}
+                                    <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700 inline-flex items-center gap-1" id="trans-status-{{ recording.id }}">
                                         <span class="loading"></span>
                                         <span class="trans-status-text">Transcribing...</span>
-                                    {% elif trans_status == 'failed' %}
-                                        <span>⚠️</span>
-                                        <span>Transcript failed</span>
-                                    {% else %}
-                                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                                        <span>Not transcribed</span>
-                                    {% endif %}
-                                </span>
-
-                                <!-- Transcription progress/logs toggle for processing recordings -->
-                                {% if trans_status == 'processing' %}
+                                    </span>
                                     <button onclick="toggleTranscriptionLogs({{ recording.id }})"
                                             class="text-xs text-blue-600 hover:text-blue-800 underline"
                                             id="logs-toggle-{{ recording.id }}">
@@ -162,22 +129,39 @@
                             {% endif %}
 
                             {% if recording.has_transcript %}
-                                <a href="/download/transcript/{{ recording.id }}"
-                                   class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm"
-                                   title="Download transcript">
-                                    📄 Transcript
-                                </a>
-                                <a href="/download/diarization/{{ recording.id }}"
-                                   class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm"
-                                   title="Download diarization data with confidence scores">
-                                    🎯 Diarization
-                                </a>
+                                <div class="relative inline-block download-dropdown">
+                                    <button class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2"
+                                            onclick="toggleDropdown(event, 'download-{{ recording.id }}')"
+                                            aria-haspopup="true"
+                                            aria-expanded="false"
+                                            aria-controls="download-{{ recording.id }}">
+                                        📄 Download
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                        </svg>
+                                    </button>
+
+                                    <div id="download-{{ recording.id }}" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10" role="menu">
+                                        <div class="py-1">
+                                            <a href="/download/transcript/{{ recording.id }}"
+                                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                               role="menuitem">
+                                                📄 Transcript (JSON)
+                                            </a>
+                                            <a href="/download/diarization/{{ recording.id }}"
+                                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                               role="menuitem">
+                                                🎯 Diarization
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
                             {% endif %}
 
                             {% if recording.status == 'completed' %}
                                 {% set pp_status = recording.post_process_status or 'pending' %}
                                 {% if pp_status == 'pending' or pp_status == 'failed' %}
-                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold text-sm"
+                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                             onclick="processRecording({{ recording.id }})"
                                             id="process-btn-{{ recording.id }}">
                                         {% if pp_status == 'failed' %}
@@ -190,7 +174,7 @@
 
                                 {% set trans_status = recording.transcription_status or 'pending' %}
                                 {% if trans_status == 'pending' or trans_status == 'failed' %}
-                                    <button class="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition font-semibold text-sm"
+                                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                             onclick="transcribeRecording({{ recording.id }})"
                                             id="transcribe-btn-{{ recording.id }}">
                                         {% if trans_status == 'failed' %}
@@ -203,7 +187,7 @@
                             {% endif %}
 
                             {% if recording.status == 'recording' or (recording.status == 'completed' and not recording.duration_minutes) %}
-                                <button class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition font-semibold text-sm"
+                                <button class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                         onclick="deleteRecording({{ recording.id }})"
                                         id="delete-btn-{{ recording.id }}"
                                         title="Delete stale recording">
@@ -213,58 +197,17 @@
                         </div>
                     </div>
 
-                    <!-- Segments Section -->
-                    {% if recording.is_segmented %}
-                        <div class="mt-4 pt-4 border-t border-gray-200">
-                            <div class="text-gray-800 font-semibold mb-3 text-sm">
-                                📊 Segments ({{ recording.segments|length }})
-                            </div>
-                            {% if recording.segments %}
-                                {% for segment in recording.segments %}
-                                <div class="bg-white border border-gray-200 rounded-md p-3 mb-2 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                                    <div class="flex-1">
-                                        <div class="text-gray-800 font-semibold text-sm mb-1 flex items-center gap-2 flex-wrap">
-                                            <span>Segment {{ segment.segment_number }}</span>
-                                            {% if segment.has_transcript %}
-                                                <span class="inline-flex items-center gap-1 text-xs">
-                                                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                                                    <span class="text-green-600">Transcribed</span>
-                                                </span>
-                                            {% else %}
-                                                <span class="inline-flex items-center gap-1 text-xs">
-                                                    <span class="w-2 h-2 rounded-full bg-orange-500"></span>
-                                                    <span class="text-orange-600">No transcript</span>
-                                                </span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="text-gray-600 text-xs">
-                                            {{ "%.1f"|format(segment.start_time_seconds / 60) }} - {{ "%.1f"|format(segment.end_time_seconds / 60) }} min
-                                            • Duration: {{ "%.1f"|format(segment.duration_seconds / 60) }} min
-                                            {% if segment.file_size_bytes %}
-                                                • {{ "%.1f"|format(segment.file_size_bytes / (1024**2)) }} MB
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                    {% if segment.has_transcript and segment.transcript_path %}
-                                        <a href="/download/transcript/segment/{{ segment.id }}"
-                                           class="px-3 py-1.5 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm"
-                                           title="Download segment transcript">
-                                            📄 Transcript
-                                        </a>
-                                        <a href="/download/diarization/segment/{{ segment.id }}"
-                                           class="px-3 py-1.5 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm"
-                                           title="Download diarization data with confidence scores">
-                                            🎯 Diarization
-                                        </a>
-                                    {% endif %}
-                                </div>
-                                {% endfor %}
-                            {% else %}
-                                <div class="text-gray-500 text-sm py-2">
-                                    No segments available
-                                </div>
-                            {% endif %}
-                        </div>
+                    <!-- Segments indicator (if segmented) -->
+                    {% if recording.is_segmented and recording.segments %}
+                    <div class="mt-3 pt-3 border-t border-gray-100">
+                        <a href="/recording/{{ recording.id }}#segments"
+                           class="text-sm text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
+                            📊 {{ recording.segments|length }} segment{{ 's' if recording.segments|length != 1 else '' }}
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </a>
+                    </div>
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -471,6 +414,103 @@
                 btn.innerHTML = '🗑️ Delete';
                 alert('Error: ' + error.message);
             });
+        }
+
+        // Dropdown functionality for download buttons with accessibility
+        function closeAllDropdowns(exceptId) {
+            const allDropdowns = document.querySelectorAll('.download-dropdown > div:not(.hidden)');
+            allDropdowns.forEach(d => {
+                if (!exceptId || d.id !== exceptId) {
+                    d.classList.add('hidden');
+                }
+            });
+
+            // Reset aria-expanded on toggle buttons
+            const toggles = document.querySelectorAll('.download-dropdown [aria-expanded="true"]');
+            toggles.forEach(t => t.setAttribute('aria-expanded', 'false'));
+        }
+
+        function toggleDropdown(event, dropdownId) {
+            event.stopPropagation();
+            const dropdown = document.getElementById(dropdownId);
+            if (!dropdown) return;
+
+            // Close all other dropdowns
+            closeAllDropdowns(dropdownId);
+
+            // Toggle this dropdown
+            const isHidden = dropdown.classList.contains('hidden');
+            dropdown.classList.toggle('hidden');
+
+            // Update aria-expanded on the toggle button
+            const toggleButton = event.currentTarget || event.target;
+            if (toggleButton && toggleButton.setAttribute) {
+                toggleButton.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+            }
+        }
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.download-dropdown')) {
+                closeAllDropdowns();
+            }
+        });
+
+        // Keyboard accessibility for dropdowns
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const hasOpenDropdown = document.querySelector('.download-dropdown > div:not(.hidden)');
+                if (hasOpenDropdown) {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    closeAllDropdowns();
+                }
+            }
+        });
+
+        // Initialize dropdown accessibility
+        function initDropdownAccessibility() {
+            // Handle Enter/Space on toggle buttons
+            const dropdownToggles = document.querySelectorAll('.download-dropdown button[onclick*="toggleDropdown"]');
+            dropdownToggles.forEach(function(toggle) {
+                toggle.addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        toggle.click();
+                    }
+                });
+            });
+
+            // Enable arrow key navigation within menus
+            const menus = document.querySelectorAll('.download-dropdown [role="menu"]');
+            menus.forEach(function(menu) {
+                menu.addEventListener('keydown', function(event) {
+                    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+
+                    const items = Array.from(menu.querySelectorAll('[role="menuitem"]'))
+                        .filter(el => !el.hasAttribute('disabled'));
+                    if (items.length === 0) return;
+
+                    event.preventDefault();
+                    const currentIndex = items.indexOf(document.activeElement);
+                    let nextIndex;
+
+                    if (event.key === 'ArrowDown') {
+                        nextIndex = currentIndex === -1 || currentIndex === items.length - 1 ? 0 : currentIndex + 1;
+                    } else {
+                        nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+                    }
+
+                    items[nextIndex].focus();
+                });
+            });
+        }
+
+        // Initialize on DOM ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDropdownAccessibility);
+        } else {
+            initDropdownAccessibility();
         }
     </script>
 </body>
