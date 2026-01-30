@@ -129,11 +129,12 @@ class TestVodImportUIIntegration:
     """Test integration between UI and existing API."""
 
     @patch('web_server.threading.Thread')
+    @patch('web_server.db.update_recording')
     @patch('web_server.VodService')
     @patch('web_server.db.create_recording')
     @patch('web_server.db.save_meetings')
     @patch('web_server.db.find_meeting_by_datetime')
-    def test_ui_form_integrates_with_api(self, mock_find_meeting, mock_save_meetings, mock_recording, mock_vod_service, mock_thread, client):
+    def test_ui_form_integrates_with_api(self, mock_find_meeting, mock_save_meetings, mock_recording, mock_vod_service, mock_update_recording, mock_thread, client):
         """Test that submitting the form would call the API correctly."""
         # This verifies that the API endpoint we're calling from UI exists
         dt = datetime(2024, 4, 22, 11, 8)
