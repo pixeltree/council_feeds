@@ -104,8 +104,8 @@ class TestCalendarService:
         # Should skip meetings with invalid dates
         assert len(meetings) == 0
 
-    @patch('services.db.get_metadata')
-    @patch('services.db.get_upcoming_meetings')
+    @patch('services.calendar_service.db.get_metadata')
+    @patch('services.calendar_service.db.get_upcoming_meetings')
     def test_get_upcoming_meetings_cached(self, mock_get_meetings, mock_get_metadata):
         """Test getting meetings from cache."""
         mock_get_metadata.return_value = datetime.now(CALGARY_TZ).isoformat()
@@ -118,10 +118,10 @@ class TestCalendarService:
         assert meetings == []
 
     @responses.activate
-    @patch('services.db.get_metadata')
-    @patch('services.db.save_meetings')
-    @patch('services.db.set_metadata')
-    @patch('services.db.get_upcoming_meetings')
+    @patch('services.calendar_service.db.get_metadata')
+    @patch('services.calendar_service.db.save_meetings')
+    @patch('services.calendar_service.db.set_metadata')
+    @patch('services.calendar_service.db.get_upcoming_meetings')
     def test_get_upcoming_meetings_force_refresh(
         self,
         mock_get_meetings,
@@ -220,7 +220,7 @@ class TestStreamService:
         assert service.stream_url_patterns is not None
         assert len(service.stream_url_patterns) > 0
 
-    @patch('services.subprocess.run')
+    @patch('services.stream_service.subprocess.run')
     def test_get_stream_url_with_ytdlp(self, mock_run):
         """Test getting stream URL using yt-dlp."""
         mock_run.return_value = Mock(
@@ -233,7 +233,7 @@ class TestStreamService:
 
         assert url == 'https://example.com/stream.m3u8'
 
-    @patch('services.subprocess.run')
+    @patch('services.stream_service.subprocess.run')
     @responses.activate
     def test_get_stream_url_with_pattern(self, mock_run):
         """Test getting stream URL using common patterns."""
@@ -251,7 +251,7 @@ class TestStreamService:
 
         assert url == 'https://lin12.isilive.ca/live/calgarycc/live/chunklist.m3u8'
 
-    @patch('services.subprocess.run')
+    @patch('services.stream_service.subprocess.run')
     @responses.activate
     def test_get_stream_url_from_page(self, mock_run):
         """Test extracting stream URL from page HTML."""
@@ -376,11 +376,11 @@ class TestRecordingService:
         assert service.timezone == CALGARY_TZ
 
     @patch('time.sleep')
-    @patch('services.subprocess.Popen')
-    @patch('services.db.create_recording')
-    @patch('services.db.update_recording')
-    @patch('services.db.log_stream_status')
-    @patch('services.db.find_meeting_by_datetime')
+    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.db.create_recording')
+    @patch('services.recording_service.db.update_recording')
+    @patch('services.recording_service.db.log_stream_status')
+    @patch('services.recording_service.db.find_meeting_by_datetime')
     @patch('os.path.getsize')
     def test_record_stream_success(
         self,
@@ -424,10 +424,10 @@ class TestRecordingService:
         mock_create_recording.assert_called_once()
         mock_update_recording.assert_called_once()
 
-    @patch('services.subprocess.Popen')
-    @patch('services.db.create_recording')
-    @patch('services.db.update_recording')
-    @patch('services.db.log_stream_status')
+    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.db.create_recording')
+    @patch('services.recording_service.db.update_recording')
+    @patch('services.recording_service.db.log_stream_status')
     def test_record_stream_failure(
         self,
         mock_log_status,
@@ -459,7 +459,7 @@ class TestRecordingService:
         service = RecordingService(output_dir=temp_output_dir)
         assert service.is_recording() is False
 
-    @patch('services.subprocess.Popen')
+    @patch('services.recording_service.subprocess.Popen')
     def test_is_recording_true_when_recording(self, mock_popen, temp_output_dir):
         """Test is_recording returns True when recording is active."""
         mock_process = MagicMock()
@@ -468,7 +468,7 @@ class TestRecordingService:
         service.current_process = mock_process
         assert service.is_recording() is True
 
-    @patch('services.subprocess.Popen')
+    @patch('services.recording_service.subprocess.Popen')
     def test_is_recording_false_when_process_ended(self, mock_popen, temp_output_dir):
         """Test is_recording returns False when process has ended."""
         mock_process = MagicMock()
@@ -478,13 +478,13 @@ class TestRecordingService:
         assert service.is_recording() is False
 
     @patch('os.path.exists')
-    @patch('services.subprocess.run')  # Mock audio detection
+    @patch('services.recording_validator.subprocess.run')  # Mock audio detection
     @patch('time.sleep')
-    @patch('services.subprocess.Popen')
-    @patch('services.db.create_recording')
-    @patch('services.db.update_recording')
-    @patch('services.db.log_stream_status')
-    @patch('services.db.find_meeting_by_datetime')
+    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.db.create_recording')
+    @patch('services.recording_service.db.update_recording')
+    @patch('services.recording_service.db.log_stream_status')
+    @patch('services.recording_service.db.find_meeting_by_datetime')
     @patch('os.path.getsize')
     def test_stop_recording_during_active_recording(
         self,
