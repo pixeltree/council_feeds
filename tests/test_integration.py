@@ -14,10 +14,10 @@ class TestCalendarIntegration:
     """Integration tests for calendar and database."""
 
     @responses.activate
-    @patch('services.db.get_metadata')
-    @patch('services.db.save_meetings')
-    @patch('services.db.set_metadata')
-    @patch('services.db.get_upcoming_meetings')
+    @patch('services.calendar_service.db.get_metadata')
+    @patch('services.calendar_service.db.save_meetings')
+    @patch('services.calendar_service.db.set_metadata')
+    @patch('services.calendar_service.db.get_upcoming_meetings')
     def test_calendar_to_database_flow(
         self,
         mock_get_meetings,
@@ -91,7 +91,7 @@ class TestMeetingSchedulingIntegration:
 class TestStreamDetectionIntegration:
     """Integration tests for stream detection."""
 
-    @patch('services.subprocess.run')
+    @patch('services.stream_service.subprocess.run')
     @responses.activate
     def test_stream_url_fallback_chain(self, mock_run):
         """Test fallback chain: yt-dlp -> patterns -> page parsing."""
@@ -128,10 +128,10 @@ class TestEndToEndScenarios:
     """End-to-end scenario tests."""
 
     @responses.activate
-    @patch('services.db.get_metadata')
-    @patch('services.db.save_meetings')
-    @patch('services.db.set_metadata')
-    @patch('services.db.get_upcoming_meetings')
+    @patch('services.calendar_service.db.get_metadata')
+    @patch('services.calendar_service.db.save_meetings')
+    @patch('services.calendar_service.db.set_metadata')
+    @patch('services.calendar_service.db.get_upcoming_meetings')
     def test_full_monitoring_cycle(
         self,
         mock_get_meetings,
@@ -169,7 +169,7 @@ class TestEndToEndScenarios:
         assert in_window is True
         assert current_meeting is not None
 
-    @patch('services.subprocess.run')
+    @patch('services.stream_service.subprocess.run')
     @responses.activate
     def test_stream_detection_when_meeting_active(self, mock_run):
         """Test stream detection during an active meeting."""
@@ -253,15 +253,15 @@ class TestDatabaseIntegration:
 class TestTranscriptionIntegration:
     """Integration tests for transcription with recording service."""
 
-    @patch('services.ENABLE_TRANSCRIPTION', True)
-    @patch('services.db.update_recording_transcript')
+    @patch('services.recording_service.ENABLE_TRANSCRIPTION', True)
+    @patch('services.recording_service.db.update_recording_transcript')
     @patch('transcription_service.TranscriptionService')
-    @patch('services.subprocess.Popen')
+    @patch('services.recording_service.recording_process')
     @patch('os.path.exists')
-    @patch('services.subprocess.run')  # Mock audio detection
-    @patch('services.db.create_recording')
-    @patch('services.db.update_recording')
-    @patch('services.db.log_stream_status')
+    @patch('services.recording_validator.subprocess.run')  # Mock audio detection
+    @patch('services.recording_service.db.create_recording')
+    @patch('services.recording_service.db.update_recording')
+    @patch('services.recording_service.db.log_stream_status')
     @patch('time.sleep')
     @patch('os.path.getsize')
     def test_recording_with_transcription(
@@ -273,7 +273,7 @@ class TestTranscriptionIntegration:
         mock_create_recording,
         mock_run,
         mock_exists,
-        mock_popen,
+        mock_recording_process,
         mock_transcription_service_class,
         mock_update_transcript,
         temp_output_dir
@@ -299,7 +299,7 @@ class TestTranscriptionIntegration:
             call_count["count"] += 1
             return None if call_count["count"] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Setup transcription mocks
         mock_transcriber = Mock()
@@ -337,12 +337,12 @@ class TestTranscriptionIntegration:
         # Verify database was updated with transcript
         mock_update_transcript.assert_called_once()
 
-    @patch('services.ENABLE_TRANSCRIPTION', True)
-    @patch('services.PYANNOTE_API_TOKEN', None)
-    @patch('services.subprocess.Popen')
-    @patch('services.db.create_recording')
-    @patch('services.db.update_recording')
-    @patch('services.db.log_stream_status')
+    @patch('services.recording_service.ENABLE_TRANSCRIPTION', True)
+    @patch('services.recording_service.PYANNOTE_API_TOKEN', None)
+    @patch('services.recording_service.recording_process')
+    @patch('services.recording_service.db.create_recording')
+    @patch('services.recording_service.db.update_recording')
+    @patch('services.recording_service.db.log_stream_status')
     @patch('time.sleep')
     @patch('os.path.getsize')
     def test_recording_continues_if_transcription_fails(
@@ -352,7 +352,7 @@ class TestTranscriptionIntegration:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
-        mock_popen,
+        mock_recording_process,
         temp_output_dir
     ):
         """Test that recording completes even if transcription fails."""
@@ -367,7 +367,7 @@ class TestTranscriptionIntegration:
             call_count["count"] += 1
             return None if call_count["count"] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Setup stream service
         mock_stream_service = Mock()
@@ -390,14 +390,14 @@ class TestTranscriptionIntegration:
 class TestPostProcessingIntegration:
     """Integration tests for post-processing with recording service."""
 
-    @patch('services.ENABLE_POST_PROCESSING', True)
+    @patch('services.recording_service.ENABLE_POST_PROCESSING', True)
     @patch('os.path.exists')
-    @patch('services.subprocess.run')  # Mock audio detection
+    @patch('services.recording_validator.subprocess.run')  # Mock audio detection
     @patch('post_processor.PostProcessor')
-    @patch('services.subprocess.Popen')
-    @patch('services.db.create_recording')
-    @patch('services.db.update_recording')
-    @patch('services.db.log_stream_status')
+    @patch('services.recording_service.recording_process')
+    @patch('services.recording_service.db.create_recording')
+    @patch('services.recording_service.db.update_recording')
+    @patch('services.recording_service.db.log_stream_status')
     @patch('time.sleep')
     @patch('os.path.getsize')
     def test_recording_with_post_processing(
@@ -407,7 +407,7 @@ class TestPostProcessingIntegration:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
-        mock_popen,
+        mock_recording_process,
         mock_post_processor_class,
         mock_run,
         mock_exists,
@@ -436,7 +436,7 @@ class TestPostProcessingIntegration:
             call_count["count"] += 1
             return None if call_count["count"] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Setup post-processor mocks
         mock_processor = Mock()
