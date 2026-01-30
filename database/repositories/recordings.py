@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from config import CALGARY_TZ, OUTPUT_DIR
@@ -416,7 +416,8 @@ def get_stale_recordings() -> List[Dict]:
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # Get all recordings (we'll check file existence for each)
+        # Get potentially stale recordings (filter to reduce filesystem checks)
+        # Only check recordings that are likely stale or recent enough to matter
         cursor.execute("""
             SELECT
                 r.id,
@@ -429,6 +430,14 @@ def get_stale_recordings() -> List[Dict]:
                 m.title as meeting_title
             FROM recordings r
             LEFT JOIN meetings m ON r.meeting_id = m.id
+            WHERE r.status IN ('recording', 'error')
+            OR (r.status = 'completed' AND (
+                r.duration_seconds IS NULL
+                OR r.duration_seconds = 0
+                OR r.file_size_bytes IS NULL
+                OR r.file_size_bytes < 1000
+            ))
+            OR datetime(r.start_time) > datetime('now', '-7 days')
             ORDER BY r.start_time DESC
         """)
 
@@ -437,15 +446,22 @@ def get_stale_recordings() -> List[Dict]:
             file_exists = os.path.exists(row['file_path'])
             file_size = os.path.getsize(row['file_path']) if file_exists else 0
 
+            # Parse start_time to check if recording is stuck
+            start_time = datetime.fromisoformat(row['start_time'].replace('Z', '+00:00'))
+            time_since_start = datetime.now(timezone.utc) - start_time
+            stuck_in_recording = row['status'] == 'recording' and time_since_start.total_seconds() > 7200  # 2 hours
+
             # Consider stale if:
             # 1. File doesn't exist (regardless of status)
             # 2. File exists but is tiny (< 1KB)
-            # 3. Status is 'recording' but file has no content
+            # 3. Status is 'recording' for >2 hours (stuck in recording state)
             # 4. Status is 'completed' but has no meaningful data
+            # 5. Status is 'error'
             is_stale = (
                 not file_exists or  # File missing
                 file_size < 1000 or  # File too small
-                row['status'] == 'recording' or  # Stuck in recording state
+                stuck_in_recording or  # Stuck in recording state for >2 hours
+                row['status'] == 'error' or  # Failed recording
                 (row['status'] == 'completed' and (
                     row['duration_seconds'] is None or
                     row['duration_seconds'] == 0 or

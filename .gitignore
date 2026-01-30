@@ -32,6 +32,9 @@ htmlcov/
 *~
 *.iml
 
+# Claude Code (personal rules only, not .claude/ directory)
+.clauderules
+
 # OS
 .DS_Store
 Thumbs.db
