@@ -12,6 +12,7 @@ from datetime import timedelta
 import json
 import time
 import logging
+from exceptions import WhisperError, DiarizationError
 
 
 class TranscriptionService:
@@ -197,7 +198,7 @@ class TranscriptionService:
                     f"{prefix}{error_msg}",
                     'error'
                 )
-            raise
+            raise WhisperError(video_path, f"{error_msg}. stderr: {stderr_output}")
 
         msg = f"Audio extracted to {output_wav_path}"
         self.logger.info(msg)
@@ -260,7 +261,7 @@ class TranscriptionService:
             self.logger.error(error_msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-            raise Exception(error_msg)
+            raise DiarizationError(audio_path, error_msg)
 
         upload_data = upload_response.json()
         presigned_url = upload_data.get('url')  # Response has 'url' not 'presigned_url'
@@ -286,7 +287,7 @@ class TranscriptionService:
             self.logger.error(error_msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-            raise Exception(error_msg)
+            raise DiarizationError(audio_path, error_msg)
 
         msg = "Audio file uploaded successfully"
         self.logger.info(msg)
@@ -311,7 +312,7 @@ class TranscriptionService:
             self.logger.error(error_msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-            raise Exception(error_msg)
+            raise DiarizationError(audio_path, error_msg)
 
         result = response.json()
 
@@ -344,13 +345,13 @@ class TranscriptionService:
                     self.logger.error(error_msg, exc_info=True)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-                    raise Exception(error_msg)
+                    raise DiarizationError(audio_path, error_msg)
                 except json.JSONDecodeError as e:
                     error_msg = f"Diarization job status response was not valid JSON: {e}"
                     self.logger.error(error_msg, exc_info=True)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-                    raise Exception(error_msg)
+                    raise DiarizationError(audio_path, error_msg)
 
                 status = job_data.get('status')
 
@@ -370,14 +371,14 @@ class TranscriptionService:
                     self.logger.error(error_msg)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-                    raise Exception(error_msg)
+                    raise DiarizationError(audio_path, error_msg)
             else:
                 # Timeout reached
                 error_msg = f"Diarization job timed out after {max_poll_time} seconds"
                 self.logger.error(error_msg)
                 if recording_id:
                     db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
-                raise Exception(error_msg)
+                raise DiarizationError(audio_path, error_msg)
 
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
@@ -500,10 +501,10 @@ class TranscriptionService:
             Dictionary with transcript segments and metadata
 
         Raises:
-            FileNotFoundError: If video_path does not exist
+            WhisperError: If video_path does not exist
         """
         if not os.path.exists(video_path):
-            raise FileNotFoundError(f"Video file not found: {video_path}")
+            raise WhisperError(video_path, f"Video file not found: {video_path}")
 
         # Import database module once at the start if we have a recording_id
         if recording_id:

@@ -430,9 +430,10 @@ class TestTranscriptionService:
 
     def test_transcribe_with_speakers_file_not_found(self):
         """Test transcription fails if file doesn't exist."""
+        from exceptions import WhisperError
         service = TranscriptionService()
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(WhisperError):
             service.transcribe_with_speakers('/nonexistent/file.mp4')
 
     @patch('subprocess.run')

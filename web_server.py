@@ -13,6 +13,12 @@ import os
 from post_processor import PostProcessor
 import threading
 from shared_state import monitoring_state
+from exceptions import (
+    CouncilRecorderError,
+    RecordingStorageError,
+    TranscriptionError,
+    DatabaseError
+)
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -1007,6 +1013,51 @@ def api_fetch_recording_speakers(recording_id):
             'success': False,
             'error': f'Failed to fetch speakers: {str(e)}'
         }), 500
+
+
+# Error handlers for custom exceptions
+@app.errorhandler(RecordingStorageError)
+def handle_storage_error(error):
+    """Handle recording storage errors."""
+    logger.error(f"Storage error: {error.message}", exc_info=True)
+    return jsonify({
+        'success': False,
+        'error': error.message,
+        'type': 'storage_error'
+    }), 500
+
+
+@app.errorhandler(TranscriptionError)
+def handle_transcription_error(error):
+    """Handle transcription errors."""
+    logger.error(f"Transcription error: {error.message}", exc_info=True)
+    return jsonify({
+        'success': False,
+        'error': error.message,
+        'type': 'transcription_error'
+    }), 500
+
+
+@app.errorhandler(DatabaseError)
+def handle_database_error(error):
+    """Handle database errors."""
+    logger.error(f"Database error: {error.message}", exc_info=True)
+    return jsonify({
+        'success': False,
+        'error': error.message,
+        'type': 'database_error'
+    }), 500
+
+
+@app.errorhandler(CouncilRecorderError)
+def handle_council_recorder_error(error):
+    """Handle all other council recorder errors."""
+    logger.error(f"Council recorder error: {error.message}", exc_info=True)
+    return jsonify({
+        'success': False,
+        'error': error.message,
+        'type': 'application_error'
+    }), 500
 
 
 def run_server(host=None, port=None):

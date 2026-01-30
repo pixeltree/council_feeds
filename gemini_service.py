@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Dict, List, Optional
 from datetime import datetime
+from exceptions import GeminiError
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ def refine_diarization(
             logger.error("Could not extract text from response")
             logger.error(f"Response type: {type(response)}")
             logger.error(f"Response dir: {dir(response)}")
-            return merged_transcript
+            raise GeminiError('response parsing', 'Could not extract text from response')
 
         # Log the raw response for debugging
         logger.debug("Raw response from API:")
@@ -143,8 +144,8 @@ def refine_diarization(
         refined_json = _extract_json_from_response(response_text)
 
         if refined_json is None:
-            logger.warning("Could not parse valid JSON from response, using original")
-            return merged_transcript
+            logger.warning("Could not parse valid JSON from response")
+            raise GeminiError('response parsing', 'Could not parse valid JSON from response')
 
         # Add metadata about refinement
         refined_json['refined_by'] = 'gemini'
@@ -175,18 +176,19 @@ def refine_diarization(
         logger.error("========================================")
         logger.error("REFINEMENT FAILED - google-genai not installed")
         logger.error(f"Time taken: {elapsed_time:.1f} seconds")
-        logger.error("Returning original transcript")
         logger.error("========================================")
-        return merged_transcript
+        raise GeminiError('initialization', 'google-genai library not installed')
+    except GeminiError:
+        # Re-raise GeminiError without wrapping
+        raise
     except Exception as e:
         elapsed_time = time.time() - start_time
         logger.error("========================================")
         logger.error("REFINEMENT FAILED - API error")
         logger.error(f"Error: {e}", exc_info=True)
         logger.error(f"Time taken: {elapsed_time:.1f} seconds")
-        logger.error("Returning original transcript")
         logger.error("========================================")
-        return merged_transcript
+        raise GeminiError('speaker refinement', str(e))
 
 
 def _construct_prompt(
