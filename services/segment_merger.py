@@ -37,7 +37,7 @@ class SegmentMerger:
             format_ext: File format extension
 
         Returns:
-            Path to merged file, or None if merge failed
+            Path to merged file on success, output_file if no segments exist (to allow validation to handle it), or None if merge actually failed
         """
         # Find all segment files
         segment_dir = os.path.dirname(pattern)
@@ -46,7 +46,9 @@ class SegmentMerger:
 
         if not segments:
             self.logger.warning("No segments found to merge")
-            return None
+            # Return output_file so validation can check if it exists
+            # If it doesn't exist, validation will mark as failed
+            return output_file
 
         if len(segments) == 1:
             # Only one segment, just rename it

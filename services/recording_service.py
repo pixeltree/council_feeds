@@ -247,15 +247,16 @@ class RecordingService:
                     timestamp,
                     format_ext
                 )
-                if merged_file:
-                    output_file = merged_file
-                    self.logger.info(f"Recording saved: {output_file}")
-                else:
+                if merged_file is None:
+                    # Merge actually failed (not just no segments)
                     error_msg = "Could not merge segments; marking recording as failed"
                     self.logger.error(error_msg)
                     db.update_recording(recording_id, end_time, 'failed', error_msg)
                     db.log_stream_status(stream_url, 'error', meeting_id, error_msg)
                     return False
+                else:
+                    output_file = merged_file
+                    self.logger.info(f"Recording saved: {output_file}")
             else:
                 self.logger.info(f"Recording saved: {output_file}")
 
