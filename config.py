@@ -5,7 +5,13 @@ Centralizes all configuration values for easier testing and maintenance.
 """
 
 import os
+import logging
 import pytz
+from dataclasses import dataclass, field
+from typing import Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Timezone
 CALGARY_TZ = pytz.timezone('America/Edmonton')
@@ -101,3 +107,273 @@ ENABLE_GEMINI_REFINEMENT = (
     os.getenv("ENABLE_GEMINI_REFINEMENT", "true").lower() == "true"
     and GEMINI_API_KEY is not None
 )
+
+
+@dataclass
+class AppConfig:
+    """
+    Type-safe configuration with validation.
+
+    This dataclass provides a validated, type-safe interface to the application
+    configuration. It ensures all required settings are present and valid before
+    the application starts.
+    """
+
+    # API endpoints
+    stream_page_url: str
+    council_calendar_api: str
+
+    # Polling intervals (in seconds)
+    active_check_interval: int
+    idle_check_interval: int
+
+    # Directory paths
+    output_dir: str
+    db_dir: str
+    db_path: str
+
+    # Recording settings
+    max_retries: int
+
+    # Web server settings
+    web_host: str
+    web_port: int
+
+    # External command settings
+    ffmpeg_command: str
+    ytdlp_command: str
+
+    # Post-processing settings
+    enable_post_processing: bool
+    post_process_silence_threshold_db: int
+    post_process_min_silence_duration: int
+
+    # Audio detection thresholds
+    audio_detection_mean_threshold_db: int
+    audio_detection_max_threshold_db: int
+
+    # Transcription settings
+    enable_transcription: bool
+    whisper_model: str
+    pyannote_api_token: Optional[str]
+
+    # Recording resilience settings
+    recording_format: str
+    enable_segmented_recording: bool
+    segment_duration: int
+    recording_reconnect: bool
+
+    # Static stream detection settings
+    enable_static_detection: bool
+    static_min_growth_kb: int
+    static_check_interval: int
+    static_max_failures: int
+    static_scene_threshold: int
+
+    # Gemini API settings
+    gemini_api_key: Optional[str]
+    gemini_model: str
+    enable_gemini_refinement: bool
+
+    # Timezone
+    timezone: pytz.tzinfo.BaseTzInfo = field(default_factory=lambda: CALGARY_TZ)
+
+    @classmethod
+    def from_env(cls) -> 'AppConfig':
+        """
+        Create an AppConfig instance from environment variables.
+
+        Returns:
+            AppConfig: Validated configuration instance
+
+        Raises:
+            ValueError: If any configuration validation fails
+        """
+        # Load all configuration from environment
+        config = cls(
+            stream_page_url=STREAM_PAGE_URL,
+            council_calendar_api=COUNCIL_CALENDAR_API,
+            active_check_interval=ACTIVE_CHECK_INTERVAL,
+            idle_check_interval=IDLE_CHECK_INTERVAL,
+            output_dir=OUTPUT_DIR,
+            db_dir=DB_DIR,
+            db_path=DB_PATH,
+            max_retries=MAX_RETRIES,
+            web_host=WEB_HOST,
+            web_port=WEB_PORT,
+            ffmpeg_command=FFMPEG_COMMAND,
+            ytdlp_command=YTDLP_COMMAND,
+            enable_post_processing=ENABLE_POST_PROCESSING,
+            post_process_silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
+            post_process_min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
+            audio_detection_mean_threshold_db=AUDIO_DETECTION_MEAN_THRESHOLD_DB,
+            audio_detection_max_threshold_db=AUDIO_DETECTION_MAX_THRESHOLD_DB,
+            enable_transcription=ENABLE_TRANSCRIPTION,
+            whisper_model=WHISPER_MODEL,
+            pyannote_api_token=PYANNOTE_API_TOKEN,
+            recording_format=RECORDING_FORMAT,
+            enable_segmented_recording=ENABLE_SEGMENTED_RECORDING,
+            segment_duration=SEGMENT_DURATION,
+            recording_reconnect=RECORDING_RECONNECT,
+            enable_static_detection=ENABLE_STATIC_DETECTION,
+            static_min_growth_kb=STATIC_MIN_GROWTH_KB,
+            static_check_interval=STATIC_CHECK_INTERVAL,
+            static_max_failures=STATIC_MAX_FAILURES,
+            static_scene_threshold=STATIC_SCENE_THRESHOLD,
+            gemini_api_key=GEMINI_API_KEY,
+            gemini_model=GEMINI_MODEL,
+            enable_gemini_refinement=ENABLE_GEMINI_REFINEMENT,
+            timezone=CALGARY_TZ,
+        )
+
+        # Validate the configuration
+        config.validate()
+
+        return config
+
+    def validate(self) -> None:
+        """
+        Validate the configuration.
+
+        Raises:
+            ValueError: If any validation check fails with a descriptive message
+        """
+        errors = []
+
+        # Validate polling intervals
+        if self.active_check_interval <= 0:
+            errors.append(
+                f"ACTIVE_CHECK_INTERVAL must be positive (got {self.active_check_interval})"
+            )
+
+        if self.idle_check_interval <= self.active_check_interval:
+            errors.append(
+                f"IDLE_CHECK_INTERVAL ({self.idle_check_interval}) must be greater than "
+                f"ACTIVE_CHECK_INTERVAL ({self.active_check_interval})"
+            )
+
+        # Validate directory paths
+        if not self.output_dir:
+            errors.append("OUTPUT_DIR must not be empty")
+        else:
+            output_path = Path(self.output_dir)
+            # Create the directory if it doesn't exist
+            try:
+                output_path.mkdir(parents=True, exist_ok=True)
+                # Check if it's writable
+                test_file = output_path / ".write_test"
+                try:
+                    test_file.touch()
+                    test_file.unlink()
+                except (OSError, PermissionError) as e:
+                    errors.append(f"OUTPUT_DIR '{self.output_dir}' is not writable: {e}")
+            except (OSError, PermissionError) as e:
+                errors.append(f"Cannot create OUTPUT_DIR '{self.output_dir}': {e}")
+
+        if not self.db_dir:
+            errors.append("DB_DIR must not be empty")
+        else:
+            db_path = Path(self.db_dir)
+            # Create the directory if it doesn't exist
+            try:
+                db_path.mkdir(parents=True, exist_ok=True)
+                # Check if it's writable
+                test_file = db_path / ".write_test"
+                try:
+                    test_file.touch()
+                    test_file.unlink()
+                except (OSError, PermissionError) as e:
+                    errors.append(f"DB_DIR '{self.db_dir}' is not writable: {e}")
+            except (OSError, PermissionError) as e:
+                errors.append(f"Cannot create DB_DIR '{self.db_dir}': {e}")
+
+        # Validate transcription settings
+        valid_whisper_models = ["tiny", "base", "small", "medium", "large", "turbo"]
+        if self.whisper_model not in valid_whisper_models:
+            errors.append(
+                f"WHISPER_MODEL must be one of {valid_whisper_models} "
+                f"(got '{self.whisper_model}')"
+            )
+
+        if self.enable_transcription and not self.pyannote_api_token:
+            errors.append(
+                "PYANNOTE_API_TOKEN is required when ENABLE_TRANSCRIPTION=true. "
+                "Get a token from https://huggingface.co/pyannote/speaker-diarization"
+            )
+
+        # Validate Gemini settings
+        if self.enable_gemini_refinement and not self.gemini_api_key:
+            errors.append(
+                "GEMINI_API_KEY is required when ENABLE_GEMINI_REFINEMENT=true"
+            )
+
+        # Validate recording format
+        valid_formats = ["mkv", "mp4", "ts"]
+        if self.recording_format not in valid_formats:
+            errors.append(
+                f"RECORDING_FORMAT must be one of {valid_formats} "
+                f"(got '{self.recording_format}')"
+            )
+
+        # Validate segment duration
+        if self.enable_segmented_recording and self.segment_duration <= 0:
+            errors.append(
+                f"SEGMENT_DURATION must be positive when segmented recording is enabled "
+                f"(got {self.segment_duration})"
+            )
+
+        # Validate static detection settings
+        if self.enable_static_detection:
+            if self.static_min_growth_kb < 0:
+                errors.append(
+                    f"STATIC_MIN_GROWTH_KB must be non-negative "
+                    f"(got {self.static_min_growth_kb})"
+                )
+            if self.static_check_interval <= 0:
+                errors.append(
+                    f"STATIC_CHECK_INTERVAL must be positive "
+                    f"(got {self.static_check_interval})"
+                )
+            if self.static_max_failures <= 0:
+                errors.append(
+                    f"STATIC_MAX_FAILURES must be positive "
+                    f"(got {self.static_max_failures})"
+                )
+            if self.static_scene_threshold < 0:
+                errors.append(
+                    f"STATIC_SCENE_THRESHOLD must be non-negative "
+                    f"(got {self.static_scene_threshold})"
+                )
+
+        # Validate web server settings
+        if self.web_port < 1 or self.web_port > 65535:
+            errors.append(
+                f"WEB_PORT must be between 1 and 65535 (got {self.web_port})"
+            )
+
+        # Validate max retries
+        if self.max_retries < 0:
+            errors.append(f"MAX_RETRIES must be non-negative (got {self.max_retries})")
+
+        # If there are any errors, raise a ValueError with all error messages
+        if errors:
+            error_message = "Configuration validation failed:\n" + "\n".join(
+                f"  - {error}" for error in errors
+            )
+            logger.error(error_message)
+            raise ValueError(error_message)
+
+        logger.info("Configuration validation passed")
+
+
+def validate_config() -> AppConfig:
+    """
+    Convenience function to validate configuration from environment.
+
+    Returns:
+        AppConfig: Validated configuration instance
+
+    Raises:
+        ValueError: If any configuration validation fails
+    """
+    return AppConfig.from_env()
