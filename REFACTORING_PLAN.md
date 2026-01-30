@@ -1,0 +1,688 @@
+# Refactoring Plan: Multi-PR Strategy
+
+**Status:** 🚧 In Progress
+**Started:** 2026-01-29
+**Target Completion:** 6 weeks from start
+
+## Progress Overview
+
+- [x] PR #1: Add Logging Framework (HIGH PRIORITY) ✅
+- [ ] PR #2: Extract Configuration Validation (HIGH PRIORITY)
+- [ ] PR #3: Add Custom Exception Types (HIGH PRIORITY)
+- [ ] PR #4: Refactor RecordingService - Extract Methods (HIGH PRIORITY)
+- [ ] PR #5: Split Database Module (MEDIUM PRIORITY)
+- [ ] PR #6: Add Dependency Injection for Services (MEDIUM PRIORITY)
+- [ ] PR #7: Improve Type Hints Coverage (MEDIUM PRIORITY)
+- [ ] PR #8: Add Resource Cleanup Context Managers (MEDIUM PRIORITY)
+
+---
+
+## PR #1: Add Logging Framework 🔴 HIGH PRIORITY
+
+**Status:** ✅ Complete
+**Estimated effort:** 4-6 hours
+**Actual effort:** ~4 hours
+**Risk level:** Low
+**Dependencies:** None
+**Branch:** `refactor/logging-framework`
+
+### Goals:
+- [x] Replace all `print()` statements with proper logging
+- [x] Add centralized logging configuration
+- [x] Support multiple log levels and outputs
+- [x] Maintain backward compatibility during transition
+
+### Changes:
+```
+Modified files:
+- config.py (add logging config)
+- main.py (initialize logging)
+- services.py (replace ~50 print statements)
+- database.py (replace ~20 print statements)
+- transcription_service.py (replace ~40 print statements)
+- gemini_service.py (replace ~20 print statements)
+- post_processor.py (replace ~15 print statements)
+- web_server.py (replace ~5 print statements)
+
+New files:
+- logging_config.py (centralized logging setup)
+- tests/test_logging.py (test logging setup)
+```
+
+### Implementation Checklist:
+- [x] Create `logging_config.py` with LOGGING_CONFIG dict
+- [x] Add logging initialization in `main.py`
+- [x] Replace print() in `services.py` (64 statements)
+- [x] Replace print() in `database.py` (9 statements)
+- [x] Replace print() in `transcription_service.py` (47 statements)
+- [x] Replace print() in `gemini_service.py` (48 statements)
+- [x] Replace print() in `post_processor.py` (53 statements)
+- [x] Replace print() in `web_server.py` (12 statements)
+- [x] Replace print() in `agenda_parser.py` (18 statements)
+- [x] Replace print() in `process_recordings.py` (23 statements)
+- [x] Replace print() in `transcription_progress.py` (2 statements)
+- [x] Add log rotation configuration
+- [x] Add tests for logging setup
+- [ ] Update documentation (README.md)
+- [x] Verify no print() statements remain: `grep -r "print(" *.py`
+
+### Testing:
+- [x] Verify log levels work correctly (DEBUG, INFO, WARNING, ERROR)
+- [x] Check log file rotation works
+- [x] Ensure all existing tests still pass (172 tests passing)
+- [ ] Test log output in Docker environment
+
+### Review Checklist:
+- [x] All tests passing (172 tests)
+- [x] No new linting errors
+- [ ] Documentation updated
+- [ ] CI/CD passes
+
+**PR Link:** https://github.com/pixeltree/council_feeds/pull/20
+**Completed:** 2026-01-29
+
+---
+
+## PR #2: Extract Configuration Validation 🔴 HIGH PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 3-4 hours
+**Risk level:** Low
+**Dependencies:** PR #1 (for logging errors)
+**Branch:** `refactor/config-validation`
+
+### Goals:
+- [ ] Validate configuration at startup
+- [ ] Fail fast with clear error messages
+- [ ] Type-safe configuration with dataclasses
+- [ ] Document all configuration options
+
+### Changes:
+```
+Modified files:
+- config.py (add AppConfig dataclass + validation)
+- main.py (validate config at startup)
+- README.md (update configuration section)
+
+New files:
+- tests/test_config.py (test validation)
+```
+
+### Implementation Checklist:
+- [ ] Create `AppConfig` dataclass in config.py
+- [ ] Add `from_env()` classmethod to load from environment
+- [ ] Add `validate()` method with all validation rules
+- [ ] Check required secrets when features enabled
+- [ ] Validate numeric ranges (intervals > 0, etc.)
+- [ ] Add helpful error messages for each validation
+- [ ] Update main.py to call validation at startup
+- [ ] Add comprehensive tests for validation
+- [ ] Update README.md configuration section
+
+### Validation Rules to Implement:
+- [ ] `ACTIVE_CHECK_INTERVAL > 0`
+- [ ] `IDLE_CHECK_INTERVAL > ACTIVE_CHECK_INTERVAL`
+- [ ] `PYANNOTE_API_TOKEN` required if `ENABLE_TRANSCRIPTION=true`
+- [ ] `GEMINI_API_KEY` required if `ENABLE_GEMINI_REFINEMENT=true`
+- [ ] `OUTPUT_DIR` is writable
+- [ ] `DB_DIR` is writable
+- [ ] `WHISPER_MODEL` is valid choice
+
+### Testing:
+- [ ] Test with missing required configs
+- [ ] Test with invalid values (negative intervals, etc.)
+- [ ] Test with valid configurations
+- [ ] Test error messages are helpful
+
+### Review Checklist:
+- [ ] All tests passing
+- [ ] Clear error messages
+- [ ] Documentation complete
+- [ ] CI/CD passes
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## PR #3: Add Custom Exception Types 🔴 HIGH PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 3-4 hours
+**Risk level:** Low
+**Dependencies:** PR #1 (for logging exceptions)
+**Branch:** `refactor/custom-exceptions`
+
+### Goals:
+- [ ] Define domain-specific exceptions
+- [ ] Standardize error handling patterns
+- [ ] Improve error messages
+- [ ] Make debugging easier
+
+### Changes:
+```
+New files:
+- exceptions.py (define all custom exceptions)
+- tests/test_exceptions.py (test exception handling)
+
+Modified files:
+- services.py (raise custom exceptions)
+- database.py (raise custom exceptions)
+- transcription_service.py (raise custom exceptions)
+- gemini_service.py (raise custom exceptions)
+- web_server.py (handle custom exceptions)
+```
+
+### Implementation Checklist:
+- [ ] Create `exceptions.py` with exception hierarchy
+- [ ] Define `CouncilRecorderError` base exception
+- [ ] Define `ConfigurationError` exception
+- [ ] Define `StreamError` and `StreamNotAvailableError`
+- [ ] Define `RecordingError` exception
+- [ ] Define `TranscriptionError` exception
+- [ ] Define `DatabaseError` exception
+- [ ] Update services.py to raise custom exceptions
+- [ ] Update database.py to raise custom exceptions
+- [ ] Update transcription_service.py to raise custom exceptions
+- [ ] Update gemini_service.py to raise custom exceptions
+- [ ] Add error handling in web_server.py
+- [ ] Add comprehensive tests for exceptions
+- [ ] Update documentation
+
+### Exception Hierarchy:
+```python
+CouncilRecorderError
+├── ConfigurationError
+├── StreamError
+│   ├── StreamNotAvailableError
+│   └── StreamConnectionError
+├── RecordingError
+│   ├── RecordingProcessError
+│   └── RecordingStorageError
+├── TranscriptionError
+│   ├── WhisperError
+│   ├── DiarizationError
+│   └── GeminiError
+└── DatabaseError
+    ├── DatabaseConnectionError
+    └── DatabaseQueryError
+```
+
+### Testing:
+- [ ] Test exception inheritance
+- [ ] Verify proper error messages
+- [ ] Test exception handling in services
+- [ ] Test error responses in web interface
+
+### Review Checklist:
+- [ ] All tests passing
+- [ ] Exception hierarchy documented
+- [ ] Error messages helpful
+- [ ] CI/CD passes
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## PR #4: Refactor RecordingService - Extract Methods 🔴 HIGH PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 6-8 hours
+**Risk level:** Medium
+**Dependencies:** PR #1, PR #3
+**Branch:** `refactor/recording-service-methods`
+
+### Goals:
+- [ ] Break down 400+ line `record_stream()` method
+- [ ] Improve testability of individual behaviors
+- [ ] Reduce cyclomatic complexity
+- [ ] Maintain exact same functionality
+
+### Changes:
+```
+Modified files:
+- services.py (extract 8-10 new methods from RecordingService)
+- tests/test_services.py (add tests for extracted methods)
+```
+
+### Implementation Checklist:
+- [ ] Extract `_create_recording_record()` method
+- [ ] Extract `_determine_output_path()` method
+- [ ] Extract `_build_ffmpeg_command()` method
+- [ ] Extract `_start_ffmpeg_process()` method
+- [ ] Extract `_monitor_recording_loop()` method
+- [ ] Extract `_check_for_static_content()` method
+- [ ] Extract `_check_audio_levels()` method
+- [ ] Extract `_handle_stop_request()` method
+- [ ] Extract `_merge_segments()` method (already exists, verify)
+- [ ] Extract `_finalize_recording()` method
+- [ ] Extract `_run_post_processing_if_enabled()` method
+- [ ] Extract `_run_transcription_if_enabled()` method
+- [ ] Extract `_handle_recording_failure()` method
+- [ ] Refactor main `record_stream()` to be orchestrator only
+- [ ] Add unit tests for each extracted method
+- [ ] Add integration test for full workflow
+- [ ] Verify no behavior changes (regression testing)
+
+### Method Signatures:
+```python
+def _create_recording_record(self, stream_url: str, meeting: Optional[Dict]) -> int
+def _determine_output_path(self, timestamp: str) -> Tuple[str, Optional[str]]
+def _build_ffmpeg_command(self, stream_url: str, output_path: str) -> List[str]
+def _start_ffmpeg_process(self, cmd: List[str]) -> subprocess.Popen
+def _monitor_recording_loop(self, process, stream_url, recording_id, meeting_id) -> None
+def _check_for_static_content(self, file_path: str, recording_id: int) -> bool
+def _finalize_recording(self, recording_id: int, output_file: str) -> bool
+def _run_post_processing_if_enabled(self, recording_id: int, output_file: str) -> None
+def _run_transcription_if_enabled(self, recording_id: int, output_file: str) -> None
+def _handle_recording_failure(self, recording_id: int, error: Exception) -> None
+```
+
+### Testing:
+- [ ] Test each extracted method independently
+- [ ] Test error handling in each method
+- [ ] Integration test for full recording workflow
+- [ ] Test with segmented recording enabled
+- [ ] Test with post-processing enabled
+- [ ] Test with transcription enabled
+- [ ] Verify all 162+ existing tests still pass
+
+### Review Checklist:
+- [ ] All tests passing
+- [ ] Cyclomatic complexity reduced (target < 10 per method)
+- [ ] No functionality changes
+- [ ] Documentation updated
+- [ ] CI/CD passes
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## PR #5: Split Database Module 🟡 MEDIUM PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 8-10 hours
+**Risk level:** Medium
+**Dependencies:** PR #3 (for exception types)
+**Branch:** `refactor/split-database`
+
+### Goals:
+- [ ] Organize database code into logical modules
+- [ ] Separate concerns (connection, models, repositories)
+- [ ] Maintain backward compatibility
+- [ ] Improve maintainability
+
+### New Structure:
+```
+database/
+  __init__.py           # Public API (backward compatible facade)
+  connection.py         # Connection management
+  models.py            # Data models/DTOs
+  migrations.py        # Schema migrations
+  repositories/
+    __init__.py
+    meetings.py        # Meeting CRUD operations
+    recordings.py      # Recording CRUD operations
+    segments.py        # Segment CRUD operations
+    metadata.py        # Metadata CRUD operations
+    logs.py           # Logging CRUD operations
+```
+
+### Implementation Checklist:
+- [ ] Create `database/` directory structure
+- [ ] Create `database/__init__.py` with backward-compatible API
+- [ ] Create `database/connection.py` with connection management
+- [ ] Create `database/models.py` with dataclasses for entities
+- [ ] Create `database/migrations.py` with schema management
+- [ ] Create `database/repositories/meetings.py`
+- [ ] Create `database/repositories/recordings.py`
+- [ ] Create `database/repositories/segments.py`
+- [ ] Create `database/repositories/metadata.py`
+- [ ] Create `database/repositories/logs.py`
+- [ ] Move functions from `database.py` to appropriate repositories
+- [ ] Update all imports to use new structure
+- [ ] Add deprecation warnings to old `database.py` functions
+- [ ] Create comprehensive tests for each repository
+- [ ] Add integration tests for cross-repository operations
+- [ ] Update documentation
+
+### Backward Compatibility:
+- [ ] Keep `database.py` as facade with deprecation warnings
+- [ ] Ensure all existing code still works without changes
+- [ ] Plan for `database.py` removal in future PR
+
+### Testing:
+- [ ] Test each repository independently
+- [ ] Test connection management
+- [ ] Test migrations
+- [ ] Integration tests for workflows
+- [ ] Verify backward compatibility (all existing code works)
+- [ ] Test transaction handling
+
+### Review Checklist:
+- [ ] All tests passing
+- [ ] Backward compatibility maintained
+- [ ] Clear module boundaries
+- [ ] Documentation complete
+- [ ] CI/CD passes
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## PR #6: Add Dependency Injection for Services 🟡 MEDIUM PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 4-6 hours
+**Risk level:** Medium
+**Dependencies:** PR #1, PR #4
+**Branch:** `refactor/dependency-injection`
+
+### Goals:
+- [ ] Make service dependencies explicit
+- [ ] Improve testability
+- [ ] Remove circular dependencies
+- [ ] Support configuration flexibility
+
+### Changes:
+```
+Modified files:
+- services.py (update service constructors)
+- main.py (wire up dependencies)
+- web_server.py (receive dependencies)
+- tests/conftest.py (update fixtures)
+- tests/test_services.py (use dependency injection)
+```
+
+### Implementation Checklist:
+- [ ] Update `CalendarService.__init__()` with explicit dependencies
+- [ ] Update `StreamService.__init__()` with explicit dependencies
+- [ ] Update `RecordingService.__init__()` with explicit dependencies
+  - [ ] Add `transcription_service` parameter
+  - [ ] Add `post_processor` parameter
+  - [ ] Make dependencies optional with defaults
+- [ ] Update `MeetingScheduler.__init__()` with explicit dependencies
+- [ ] Update `main.py` to wire up all dependencies
+- [ ] Update `web_server.py` to receive services as parameters
+- [ ] Update test fixtures to use dependency injection
+- [ ] Add tests with mock dependencies
+- [ ] Update documentation
+
+### Service Constructors:
+```python
+class RecordingService:
+    def __init__(
+        self,
+        output_dir: str,
+        stream_service: StreamService,
+        transcription_service: Optional[TranscriptionService] = None,
+        post_processor: Optional[PostProcessor] = None,
+        ffmpeg_command: str = FFMPEG_COMMAND,
+        timezone = CALGARY_TZ
+    )
+
+class TranscriptionService:
+    def __init__(
+        self,
+        whisper_model: str,
+        pyannote_api_token: Optional[str] = None,
+        gemini_service: Optional[GeminiService] = None,
+        device: Optional[str] = None
+    )
+```
+
+### Testing:
+- [ ] Test services with mock dependencies
+- [ ] Test services with real dependencies
+- [ ] Verify optional dependencies work correctly
+- [ ] Integration tests with full dependency graph
+
+### Review Checklist:
+- [ ] All tests passing
+- [ ] Dependencies explicit and documented
+- [ ] No circular dependencies
+- [ ] CI/CD passes
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## PR #7: Improve Type Hints Coverage 🟡 MEDIUM PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 4-5 hours
+**Risk level:** Low
+**Dependencies:** PR #5 (for new database structure)
+**Branch:** `refactor/type-hints`
+
+### Goals:
+- [ ] Complete type hints across all modules
+- [ ] Enable mypy strict mode
+- [ ] Improve IDE autocomplete
+- [ ] Document interfaces better
+
+### Changes:
+```
+Modified files:
+- services.py (complete all type hints)
+- database/ (all modules - complete type hints)
+- transcription_service.py (complete type hints)
+- gemini_service.py (complete type hints)
+- web_server.py (complete type hints)
+- post_processor.py (complete type hints)
+- agenda_parser.py (complete type hints)
+- shared_state.py (complete type hints)
+
+New files:
+- mypy.ini (strict mypy configuration)
+- py.typed (marker file for PEP 561)
+
+Modified files:
+- .github/workflows/test.yml (add mypy check)
+- requirements.txt (add mypy)
+```
+
+### Implementation Checklist:
+- [ ] Add missing return types to all functions
+- [ ] Parameterize generic types (Dict[str, Any], List[Dict], etc.)
+- [ ] Use Optional[] for nullable parameters
+- [ ] Add TypedDict for complex dictionaries
+- [ ] Add Protocol types for interfaces
+- [ ] Create `mypy.ini` with strict configuration
+- [ ] Fix all mypy errors in strict mode
+- [ ] Add mypy to CI/CD pipeline
+- [ ] Create `py.typed` marker file
+- [ ] Update documentation with type information
+
+### Mypy Configuration:
+```ini
+[mypy]
+python_version = 3.9
+warn_return_any = True
+warn_unused_configs = True
+disallow_untyped_defs = True
+disallow_incomplete_defs = True
+check_untyped_defs = True
+disallow_untyped_calls = True
+no_implicit_optional = True
+warn_redundant_casts = True
+warn_unused_ignores = True
+warn_no_return = True
+```
+
+### Testing:
+- [ ] Run `mypy --strict .` with zero errors
+- [ ] Verify type checking in CI/CD
+- [ ] Test IDE autocomplete improvements
+- [ ] All existing tests pass
+
+### Review Checklist:
+- [ ] Zero mypy errors in strict mode
+- [ ] All public APIs have type hints
+- [ ] Documentation updated
+- [ ] CI/CD passes with mypy check
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## PR #8: Add Resource Cleanup Context Managers 🟡 MEDIUM PRIORITY
+
+**Status:** ⏸️ Not Started
+**Estimated effort:** 3-4 hours
+**Risk level:** Low
+**Dependencies:** PR #4 (refactored services)
+**Branch:** `refactor/context-managers`
+
+### Goals:
+- [ ] Ensure proper cleanup in all error paths
+- [ ] Use context managers for resources
+- [ ] Prevent resource leaks
+- [ ] Improve reliability
+
+### Changes:
+```
+Modified files:
+- services.py (add context managers for processes)
+- transcription_service.py (enhance existing cleanup)
+
+New files:
+- tests/test_resource_cleanup.py (test cleanup)
+```
+
+### Implementation Checklist:
+- [ ] Create `recording_process()` context manager for ffmpeg
+- [ ] Create `temporary_wav_file()` context manager
+- [ ] Update `RecordingService` to use process context manager
+- [ ] Update `TranscriptionService` to use WAV context manager
+- [ ] Add timeout handling in cleanup
+- [ ] Add tests for normal cleanup
+- [ ] Add tests for cleanup on exceptions
+- [ ] Add tests for timeout scenarios
+- [ ] Verify no resource leaks with long-running tests
+
+### Context Managers:
+```python
+@contextmanager
+def recording_process(cmd: List[str]) -> Iterator[subprocess.Popen]:
+    """Context manager for ffmpeg recording process with guaranteed cleanup."""
+
+@contextmanager
+def temporary_wav_file(video_path: str) -> Iterator[str]:
+    """Context manager for temporary WAV extraction with guaranteed cleanup."""
+
+@contextmanager
+def db_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Cursor]:
+    """Context manager for database transactions with rollback on error."""
+```
+
+### Testing:
+- [ ] Test cleanup on normal exit
+- [ ] Test cleanup on exceptions
+- [ ] Test cleanup on timeouts
+- [ ] Test nested context managers
+- [ ] Verify no resource leaks (check file descriptors, processes)
+
+### Review Checklist:
+- [ ] All tests passing
+- [ ] Resource cleanup guaranteed
+- [ ] No resource leaks detected
+- [ ] CI/CD passes
+
+**PR Link:** _[To be added]_
+**Completed:** _[Date to be added]_
+
+---
+
+## Timeline
+
+### Week 1-2: High Priority (Foundation)
+- [ ] **Day 1-2:** PR #1 (Logging Framework)
+- [ ] **Day 3-4:** PR #2 (Configuration Validation)
+- [ ] **Day 5:** PR #3 (Custom Exceptions)
+
+### Week 3-4: Core Refactoring
+- [ ] **Day 1-3:** PR #4 (Refactor RecordingService)
+- [ ] **Day 4-5:** PR #5 (Split Database Module) - Start
+
+### Week 5: Medium Priority
+- [ ] **Day 1-2:** PR #5 (Split Database Module) - Complete
+- [ ] **Day 3-4:** PR #6 (Dependency Injection)
+- [ ] **Day 5:** PR #7 (Type Hints) - Start
+
+### Week 6: Polish
+- [ ] **Day 1-2:** PR #7 (Type Hints) - Complete
+- [ ] **Day 3-4:** PR #8 (Context Managers)
+- [ ] **Day 5:** Documentation updates and final review
+
+---
+
+## Success Metrics
+
+### After All PRs Merged:
+
+#### Code Quality:
+- [ ] Zero `print()` statements in production code
+- [ ] 100% type hint coverage (mypy strict mode passes)
+- [ ] Cyclomatic complexity < 10 per method
+- [ ] No module > 500 lines
+
+#### Maintainability:
+- [ ] Clear module boundaries (database/, services/, etc.)
+- [ ] All exceptions documented and typed
+- [ ] Configuration validated at startup
+- [ ] Resource cleanup guaranteed (context managers)
+
+#### Testing:
+- [ ] Test coverage > 85%
+- [ ] 180+ tests (add ~20 new tests)
+- [ ] All tests < 100ms (except integration/E2E)
+- [ ] Mypy passes in CI/CD
+
+#### Documentation:
+- [ ] All public APIs documented
+- [ ] Architecture documented
+- [ ] Configuration fully documented
+- [ ] Migration guides for breaking changes
+
+---
+
+## Notes
+
+- Each PR should be **independently reviewable** (< 500 lines changed)
+- Maintain **backward compatibility** until explicitly planning breaking changes
+- Add **deprecation warnings** for changed APIs
+- Include **migration guide** in PR descriptions
+- **No functionality changes** - only refactoring
+- **Test in Docker** environment before merging
+
+---
+
+## Maintenance
+
+**How to update this file:**
+
+When starting work on a PR:
+1. Change status from ⏸️ Not Started to 🚧 In Progress
+2. Add your branch name
+3. Update the progress checkboxes as you complete items
+
+When completing a PR:
+1. Change status from 🚧 In Progress to ✅ Complete
+2. Add PR link
+3. Add completion date
+4. Update the progress overview at the top
+
+When a PR is merged:
+1. Mark the top-level checkbox as [x]
+2. Celebrate! 🎉
+
+---
+
+**Last Updated:** 2026-01-29
+**Next Review:** After each PR merge
