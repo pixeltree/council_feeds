@@ -60,7 +60,7 @@ python main.py
 
 ## Testing
 
-The project includes **43 comprehensive tests** covering all core functionality.
+The project includes **246 comprehensive tests** covering all core functionality.
 
 ### Run Tests Locally
 
@@ -82,9 +82,16 @@ python -m pytest tests/ -m slow           # Slow tests only
 
 ### Test Organization
 
-- `tests/test_database.py` - Database operations (14 tests)
-- `tests/test_services.py` - Service classes (17 tests)
-- `tests/test_integration.py` - End-to-end workflows (12 tests)
+- `tests/test_database.py` - Database operations
+- `tests/test_services.py` - Service classes
+- `tests/test_config.py` - Configuration validation
+- `tests/test_exceptions.py` - Exception handling
+- `tests/test_transcription_service.py` - Transcription and diarization
+- `tests/test_gemini_service.py` - AI refinement
+- `tests/test_post_processor.py` - Audio segmentation
+- `tests/test_resource_cleanup.py` - Resource management (24 tests)
+- `tests/test_web_server.py` - Web dashboard
+- `tests/test_agenda_parser.py` - Meeting agenda parsing
 
 ### Continuous Integration
 
@@ -106,8 +113,9 @@ Tests run automatically via GitHub Actions on:
 - **Automatic Recording**: Starts recording when stream goes live, stops when it ends
 - **Meeting Association**: Links recordings to specific council meetings
 - **Statistics**: Track recording history, duration, and file sizes
+- **Resource Management**: Guaranteed cleanup of processes and files with context managers
 - **Docker Ready**: Persistent storage for database and recordings
-- **Comprehensive Tests**: 43 tests ensuring reliability
+- **Comprehensive Tests**: 246 tests ensuring reliability
 
 ## Requirements
 
@@ -298,25 +306,60 @@ ts.transcribe_with_speakers('./recordings/council_meeting_20260127_140000.mp4')
 
 **Note:** Transcription is CPU-intensive. Processing happens after recording completes, so it won't interfere with live recording.
 
+### Resource Management
+
+The application uses context managers to guarantee proper cleanup of resources:
+
+**Process Management**
+- Recording processes cleaned up gracefully with escalating signals
+- SIGINT → SIGTERM → SIGKILL escalation with timeouts
+- No zombie processes or resource leaks
+
+**File Management**
+- Temporary files automatically cleaned up
+- Safe cleanup even on exceptions or crashes
+- Optional automatic deletion for temporary artifacts
+
+**Database Transactions**
+- Automatic rollback on errors
+- Guaranteed transaction integrity
+- Connection cleanup
+
+All resources (processes, files, database connections) are guaranteed to be cleaned up properly even when errors occur, ensuring system stability during long-running recording sessions.
+
 ## Architecture
 
 The codebase is organized for maintainability and testability:
 
 ```
-├── config.py           # Configuration management
-├── services.py         # Business logic services
-│   ├── CalendarService      # API interactions
-│   ├── MeetingScheduler     # Meeting window logic
-│   ├── StreamService        # Stream detection
-│   └── RecordingService     # Recording management
-├── database.py         # Database operations
-├── post_processor.py   # Segment splitting (experimental)
-├── main.py            # Application entry point
-├── web_server.py      # Flask dashboard
-└── tests/             # Comprehensive test suite
+├── config.py              # Configuration management with validation
+├── services.py            # Business logic services
+│   ├── CalendarService         # API interactions
+│   ├── MeetingScheduler        # Meeting window logic
+│   ├── StreamService           # Stream detection
+│   └── RecordingService        # Recording management
+├── database/              # Modular database package
+│   ├── connection.py           # Connection management
+│   ├── migrations.py           # Schema management
+│   └── repositories/           # Data access layer
+├── resource_managers.py   # Context managers for cleanup
+├── exceptions.py          # Custom exception hierarchy
+├── transcription_service.py  # Whisper + diarization
+├── gemini_service.py      # AI transcript refinement
+├── post_processor.py      # Audio segmentation
+├── main.py               # Application entry point
+├── web_server.py         # Flask dashboard
+└── tests/                # 246 comprehensive tests
     ├── test_database.py
     ├── test_services.py
-    └── test_integration.py
+    ├── test_config.py
+    ├── test_exceptions.py
+    ├── test_transcription_service.py
+    ├── test_gemini_service.py
+    ├── test_post_processor.py
+    ├── test_resource_cleanup.py
+    ├── test_web_server.py
+    └── test_agenda_parser.py
 ```
 
 ## How It Works
