@@ -5,9 +5,10 @@ Provides a simple web interface to view recording status and upcoming meetings.
 """
 
 import logging
-from flask import Flask, render_template, jsonify, send_file, request
+from flask import Flask, render_template, jsonify, send_file, request, Response
 import database as db
 from datetime import datetime
+from typing import Dict, List, Optional, Union, Tuple, Any
 from config import CALGARY_TZ, WEB_HOST, WEB_PORT
 import os
 from post_processor import PostProcessor
@@ -27,18 +28,18 @@ app = Flask(__name__)
 recording_service = None
 post_processor_service = None
 
-def set_recording_service(service):
+def set_recording_service(service: Any) -> None:
     """Set the recording service instance for the web server to use."""
     global recording_service
     recording_service = service
 
-def set_post_processor(processor):
+def set_post_processor(processor: Any) -> None:
     """Set the post processor instance for the web server to use."""
     global post_processor_service
     post_processor_service = processor
 
 
-def get_current_recording():
+def get_current_recording() -> Optional[Dict[str, Any]]:
     """Get currently active recording if any."""
     with db.get_db_connection() as conn:
         cursor = conn.cursor()
@@ -67,7 +68,7 @@ def get_current_recording():
         return None
 
 
-def format_recordings(recordings):
+def format_recordings(recordings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Format recordings for display."""
     formatted = []
     for rec in recordings:
@@ -89,7 +90,7 @@ def format_recordings(recordings):
 
 
 @app.route('/')
-def index():
+def index() -> str:
     """Main status page."""
     # Get current recording status
     current_recording = get_current_recording()
@@ -122,7 +123,7 @@ def index():
 
 
 @app.route('/recordings')
-def recordings_list():
+def recordings_list() -> str:
     """Recordings list page with segments."""
     recordings = db.get_recent_recordings(limit=50)
 
@@ -154,7 +155,7 @@ def recordings_list():
 
 
 @app.route('/recording/<int:recording_id>')
-def recording_detail(recording_id):
+def recording_detail(recording_id: int) -> Union[str, Tuple[str, int]]:
     """Recording detail page."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -225,7 +226,7 @@ def recording_detail(recording_id):
 
 
 @app.route('/api/status')
-def api_status():
+def api_status() -> Response:
     """API endpoint for status information."""
     current_recording = get_current_recording()
     stats = db.get_recording_stats()
@@ -247,7 +248,7 @@ def api_status():
 
 
 @app.route('/api/stop-recording', methods=['POST'])
-def api_stop_recording():
+def api_stop_recording() -> Union[Response, Tuple[Response, int]]:
     """API endpoint to stop the current recording."""
     global recording_service
 
@@ -278,7 +279,7 @@ def api_stop_recording():
 
 
 @app.route('/api/monitoring/start', methods=['POST'])
-def api_start_monitoring():
+def api_start_monitoring() -> Response:
     """API endpoint to start monitoring."""
     monitoring_state.enable()
     return jsonify({
@@ -288,7 +289,7 @@ def api_start_monitoring():
 
 
 @app.route('/api/monitoring/stop', methods=['POST'])
-def api_stop_monitoring():
+def api_stop_monitoring() -> Response:
     """API endpoint to stop monitoring."""
     monitoring_state.disable()
     return jsonify({
@@ -298,7 +299,7 @@ def api_stop_monitoring():
 
 
 @app.route('/api/monitoring/status', methods=['GET'])
-def api_monitoring_status():
+def api_monitoring_status() -> Response:
     """API endpoint to get monitoring status."""
     return jsonify({
         'monitoring_enabled': monitoring_state.enabled
@@ -306,7 +307,7 @@ def api_monitoring_status():
 
 
 @app.route('/api/refresh-agenda', methods=['POST'])
-def api_refresh_agenda():
+def api_refresh_agenda() -> Union[Response, Tuple[Response, int]]:
     """API endpoint to manually refresh the meeting agenda."""
     global recording_service
 
@@ -338,7 +339,7 @@ def api_refresh_agenda():
 
 
 @app.route('/api/recordings/<int:recording_id>/process', methods=['POST'])
-def process_recording(recording_id):
+def process_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """Trigger post-processing for a recording."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -359,7 +360,7 @@ def process_recording(recording_id):
     db.update_post_process_status(recording_id, 'processing', None)
 
     # Run post-processing in background thread
-    def run_processing():
+    def run_processing() -> None:
         # Use injected post processor or create a default one
         global post_processor_service
         if post_processor_service is not None:
@@ -376,14 +377,14 @@ def process_recording(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/segment', methods=['POST'])
-def segment_recording(recording_id):
+def segment_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """Trigger segmentation for a recording (legacy endpoint - use /process instead)."""
     # Redirect to the new process endpoint
     return process_recording(recording_id)
 
 
 @app.route('/download/transcript/<int:recording_id>')
-def download_recording_transcript(recording_id):
+def download_recording_transcript(recording_id: int) -> Union[Response, Tuple[str, int]]:
     """Download transcript for a recording."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -397,12 +398,12 @@ def download_recording_transcript(recording_id):
 
 
 @app.route('/download/transcript/segment/<int:segment_id>')
-def download_segment_transcript(segment_id):
+def download_segment_transcript(segment_id: int) -> Union[Response, Tuple[str, int]]:
     """Download transcript for a segment."""
-    segments = db.get_db_connection()
+    conn = db.get_db_connection()
 
-    with segments as conn:
-        cursor = conn.cursor()
+    with conn as connection:
+        cursor = connection.cursor()
         cursor.execute("SELECT transcript_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
 
@@ -418,7 +419,7 @@ def download_segment_transcript(segment_id):
 
 
 @app.route('/download/diarization/<int:recording_id>')
-def download_recording_diarization(recording_id):
+def download_recording_diarization(recording_id: int) -> Union[Response, Tuple[str, int]]:
     """Download diarization data (prefers Gemini-refined, falls back to pyannote)."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -450,7 +451,7 @@ def download_recording_diarization(recording_id):
 
 
 @app.route('/download/diarization/pyannote/<int:recording_id>')
-def download_recording_diarization_pyannote(recording_id):
+def download_recording_diarization_pyannote(recording_id: int) -> Union[Response, Tuple[str, int]]:
     """Download pyannote diarization data for a recording."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -474,7 +475,7 @@ def download_recording_diarization_pyannote(recording_id):
 
 
 @app.route('/download/diarization/gemini/<int:recording_id>')
-def download_recording_diarization_gemini(recording_id):
+def download_recording_diarization_gemini(recording_id: int) -> Union[Response, Tuple[str, int]]:
     """Download Gemini-refined diarization data for a recording."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -498,12 +499,12 @@ def download_recording_diarization_gemini(recording_id):
 
 
 @app.route('/download/diarization/segment/<int:segment_id>')
-def download_segment_diarization(segment_id):
+def download_segment_diarization(segment_id: int) -> Union[Response, Tuple[str, int]]:
     """Download diarization data for a segment (prefers Gemini, falls back to pyannote)."""
     conn = db.get_db_connection()
 
-    with conn:
-        cursor = conn.cursor()
+    with conn as connection:
+        cursor = connection.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
 
@@ -531,12 +532,12 @@ def download_segment_diarization(segment_id):
 
 
 @app.route('/download/diarization/pyannote/segment/<int:segment_id>')
-def download_segment_diarization_pyannote(segment_id):
+def download_segment_diarization_pyannote(segment_id: int) -> Union[Response, Tuple[str, int]]:
     """Download pyannote diarization data for a segment."""
     conn = db.get_db_connection()
 
-    with conn:
-        cursor = conn.cursor()
+    with conn as connection:
+        cursor = connection.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
 
@@ -553,12 +554,12 @@ def download_segment_diarization_pyannote(segment_id):
 
 
 @app.route('/download/diarization/gemini/segment/<int:segment_id>')
-def download_segment_diarization_gemini(segment_id):
+def download_segment_diarization_gemini(segment_id: int) -> Union[Response, Tuple[str, int]]:
     """Download Gemini-refined diarization data for a segment."""
     conn = db.get_db_connection()
 
-    with conn:
-        cursor = conn.cursor()
+    with conn as connection:
+        cursor = connection.cursor()
         cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
         row = cursor.fetchone()
 
@@ -575,7 +576,7 @@ def download_segment_diarization_gemini(segment_id):
 
 
 @app.route('/api/recordings/stale', methods=['GET'])
-def api_get_stale_recordings():
+def api_get_stale_recordings() -> Response:
     """API endpoint to get all stale recordings."""
     stale_recordings = db.get_stale_recordings()
 
@@ -600,7 +601,7 @@ def api_get_stale_recordings():
 
 
 @app.route('/api/recordings/<int:recording_id>', methods=['DELETE'])
-def api_delete_recording(recording_id):
+def api_delete_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to delete a recording."""
     success = db.delete_recording(recording_id)
 
@@ -617,7 +618,7 @@ def api_delete_recording(recording_id):
 
 
 @app.route('/api/recordings/stale/cleanup', methods=['POST'])
-def api_cleanup_stale_recordings():
+def api_cleanup_stale_recordings() -> Response:
     """API endpoint to delete all stale recordings."""
     stale_recordings = db.get_stale_recordings()
 
@@ -642,7 +643,7 @@ def api_cleanup_stale_recordings():
 
 
 @app.route('/api/recordings/<int:recording_id>/transcribe', methods=['POST'])
-def api_transcribe_recording(recording_id):
+def api_transcribe_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to trigger transcription for a recording or its segments."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -663,7 +664,7 @@ def api_transcribe_recording(recording_id):
     db.update_transcription_status(recording_id, 'processing')
 
     # Run transcription in background thread
-    def run_transcription():
+    def run_transcription() -> None:
         from transcription_service import TranscriptionService
         from config import PYANNOTE_API_TOKEN, ENABLE_TRANSCRIPTION
 
@@ -764,7 +765,7 @@ def api_transcribe_recording(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/transcription-status', methods=['GET'])
-def api_get_transcription_status(recording_id):
+def api_get_transcription_status(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to get detailed transcription status with logs."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -815,7 +816,7 @@ def api_get_transcription_status(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/transcription-status/reset', methods=['POST'])
-def api_reset_transcription_status(recording_id):
+def api_reset_transcription_status(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to reset transcription status to pending."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -831,7 +832,7 @@ def api_reset_transcription_status(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/transcription/reset-step', methods=['POST'])
-def api_reset_transcription_step(recording_id):
+def api_reset_transcription_step(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to reset a specific transcription step.
 
     Only allows resetting the latest completed step to maintain consistency.
@@ -902,7 +903,7 @@ def api_reset_transcription_step(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/transcription/run-step', methods=['POST'])
-def api_run_transcription_step(recording_id):
+def api_run_transcription_step(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to run a specific transcription step.
 
     Validates dependencies are met before running the step.
@@ -952,7 +953,7 @@ def api_run_transcription_step(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/speakers', methods=['GET'])
-def api_get_recording_speakers(recording_id):
+def api_get_recording_speakers(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to get speaker list for a recording."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -968,7 +969,7 @@ def api_get_recording_speakers(recording_id):
 
 
 @app.route('/api/recordings/<int:recording_id>/speakers/fetch', methods=['POST'])
-def api_fetch_recording_speakers(recording_id):
+def api_fetch_recording_speakers(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to fetch speaker list from meeting agenda."""
     recording = db.get_recording_by_id(recording_id)
 
@@ -1028,7 +1029,7 @@ def api_fetch_recording_speakers(recording_id):
 
 # Error handlers for custom exceptions
 @app.errorhandler(RecordingStorageError)
-def handle_storage_error(error):
+def handle_storage_error(error: RecordingStorageError) -> Tuple[Response, int]:
     """Handle recording storage errors."""
     logger.error(f"Storage error: {error.message}", exc_info=True)
     return jsonify({
@@ -1039,7 +1040,7 @@ def handle_storage_error(error):
 
 
 @app.errorhandler(TranscriptionError)
-def handle_transcription_error(error):
+def handle_transcription_error(error: TranscriptionError) -> Tuple[Response, int]:
     """Handle transcription errors."""
     logger.error(f"Transcription error: {error.message}", exc_info=True)
     return jsonify({
@@ -1050,7 +1051,7 @@ def handle_transcription_error(error):
 
 
 @app.errorhandler(DatabaseError)
-def handle_database_error(error):
+def handle_database_error(error: DatabaseError) -> Tuple[Response, int]:
     """Handle database errors."""
     logger.error(f"Database error: {error.message}", exc_info=True)
     return jsonify({
@@ -1061,7 +1062,7 @@ def handle_database_error(error):
 
 
 @app.errorhandler(CouncilRecorderError)
-def handle_council_recorder_error(error):
+def handle_council_recorder_error(error: CouncilRecorderError) -> Tuple[Response, int]:
     """Handle all other council recorder errors."""
     logger.error(f"Council recorder error: {error.message}", exc_info=True)
     return jsonify({
@@ -1071,7 +1072,7 @@ def handle_council_recorder_error(error):
     }), 500
 
 
-def run_server(host=None, port=None):
+def run_server(host: Optional[str] = None, port: Optional[int] = None) -> None:
     """Run the Flask web server."""
     host = host or WEB_HOST
     port = port or WEB_PORT

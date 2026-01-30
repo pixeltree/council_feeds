@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from config import CALGARY_TZ, OUTPUT_DIR
 from database.connection import get_db_connection, parse_datetime_from_db
@@ -12,7 +12,7 @@ from database.connection import get_db_connection, parse_datetime_from_db
 logger = logging.getLogger(__name__)
 
 
-def create_recording(meeting_id: Optional[int], file_path: str, stream_url: str, start_time: datetime) -> int:
+def create_recording(meeting_id: Optional[int], file_path: str, stream_url: str, start_time: datetime) -> Optional[int]:
     """Create a new recording record and return its ID.
 
     Args:
@@ -49,7 +49,7 @@ def create_recording(meeting_id: Optional[int], file_path: str, stream_url: str,
 
 
 def update_recording(recording_id: int, end_time: datetime, status: str,
-                     error_message: Optional[str] = None):
+                     error_message: Optional[str] = None) -> None:
     """Update recording with completion details.
 
     Args:
@@ -99,7 +99,7 @@ def update_recording(recording_id: int, end_time: datetime, status: str,
         ))
 
 
-def get_recording_stats() -> Dict:
+def get_recording_stats() -> Dict[str, Any]:
     """Get recording statistics.
 
     Returns:
@@ -139,7 +139,7 @@ def get_recording_stats() -> Dict:
         }
 
 
-def update_recording_transcript(recording_id: int, transcript_path: str):
+def update_recording_transcript(recording_id: int, transcript_path: str) -> None:
     """Update recording with transcript file path.
 
     Args:
@@ -160,7 +160,7 @@ def update_recording_diarization_paths(
     recording_id: int,
     pyannote_path: Optional[str] = None,
     gemini_path: Optional[str] = None
-):
+) -> None:
     """Update recording with diarization file paths.
 
     Args:
@@ -179,7 +179,7 @@ def update_recording_diarization_paths(
         """, (pyannote_path, gemini_path, recording_id))
 
 
-def get_recent_recordings(limit: int = 10) -> List[Dict]:
+def get_recent_recordings(limit: int = 10) -> List[Dict[str, Any]]:
     """Get recent recordings with meeting details.
 
     Args:
@@ -313,7 +313,7 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
         return None
 
 
-def mark_recording_segmented(recording_id: int):
+def mark_recording_segmented(recording_id: int) -> None:
     """Mark a recording as having been segmented.
 
     Args:
@@ -329,7 +329,7 @@ def mark_recording_segmented(recording_id: int):
         """, (recording_id,))
 
 
-def update_post_process_status(recording_id: int, status: str, error: Optional[str] = None):
+def update_post_process_status(recording_id: int, status: str, error: Optional[str] = None) -> None:
     """Update post-processing status for a recording.
 
     Args:
@@ -351,7 +351,7 @@ def update_post_process_status(recording_id: int, status: str, error: Optional[s
         """, (status, now, error, recording_id))
 
 
-def get_unprocessed_recordings(limit: int = 50) -> List[Dict]:
+def get_unprocessed_recordings(limit: int = 50) -> List[Dict[str, Any]]:
     """Get completed recordings that haven't been post-processed yet.
 
     Args:
@@ -458,7 +458,7 @@ def get_stale_recordings() -> List[Dict]:
         return stale_recordings
 
 
-def get_orphaned_files(recordings_dir: str = None) -> List[Dict]:
+def get_orphaned_files(recordings_dir: Optional[str] = None) -> List[Dict[str, Any]]:
     """Get files in recordings directory that have no database entry.
 
     Args:
@@ -513,7 +513,7 @@ def get_orphaned_files(recordings_dir: str = None) -> List[Dict]:
     return sorted(orphaned_files, key=lambda x: x['modified_time'], reverse=True)
 
 
-def update_transcription_status(recording_id: int, status: str, error: Optional[str] = None):
+def update_transcription_status(recording_id: int, status: str, error: Optional[str] = None) -> None:
     """Update transcription status for a recording.
 
     Args:
@@ -535,7 +535,7 @@ def update_transcription_status(recording_id: int, status: str, error: Optional[
         """, (status, now, error, recording_id))
 
 
-def update_transcription_progress(recording_id: int, progress: Dict):
+def update_transcription_progress(recording_id: int, progress: Dict[str, Any]) -> None:
     """Update transcription progress details.
 
     Args:
@@ -551,7 +551,7 @@ def update_transcription_progress(recording_id: int, progress: Dict):
         """, (json.dumps(progress), recording_id))
 
 
-def add_transcription_log(recording_id: int, message: str, level: str = 'info'):
+def add_transcription_log(recording_id: int, message: str, level: str = 'info') -> None:
     """Add a log message to the transcription logs.
 
     Args:
@@ -591,7 +591,7 @@ def add_transcription_log(recording_id: int, message: str, level: str = 'info'):
         """, (json.dumps(logs), recording_id))
 
 
-def get_recordings_needing_transcription(limit: int = 50) -> List[Dict]:
+def get_recordings_needing_transcription(limit: int = 50) -> List[Dict[str, Any]]:
     """Get recordings that need transcription (completed but not yet transcribed).
 
     Args:
@@ -649,7 +649,7 @@ def get_recordings_needing_transcription(limit: int = 50) -> List[Dict]:
         return recordings
 
 
-def update_transcription_step(recording_id: int, step_name: str, status: str, data: Optional[Dict] = None):
+def update_transcription_step(recording_id: int, step_name: str, status: str, data: Optional[Dict[str, Any]] = None) -> None:
     """Update the status of a specific transcription step.
 
     Args:
@@ -689,7 +689,7 @@ def update_transcription_step(recording_id: int, step_name: str, status: str, da
         """, (json.dumps(steps), recording_id))
 
 
-def get_transcription_steps(recording_id: int) -> Dict:
+def get_transcription_steps(recording_id: int) -> Dict[str, Any]:
     """Get transcription steps status for a recording.
 
     Args:
@@ -705,14 +705,15 @@ def get_transcription_steps(recording_id: int) -> Dict:
 
         if row and row['transcription_steps']:
             try:
-                return json.loads(row['transcription_steps'])
+                steps: Dict[str, Any] = json.loads(row['transcription_steps'])
+                return steps
             except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
         return {}
 
 
-def update_wav_path(recording_id: int, wav_path: str):
+def update_wav_path(recording_id: int, wav_path: str) -> None:
     """Update the WAV file path for a recording.
 
     Args:
@@ -728,7 +729,7 @@ def update_wav_path(recording_id: int, wav_path: str):
         """, (wav_path, recording_id))
 
 
-def update_recording_speakers(recording_id: int, speakers: List[Dict[str, str]]):
+def update_recording_speakers(recording_id: int, speakers: List[Dict[str, str]]) -> None:
     """Update recording with speaker list from meeting agenda.
 
     Args:
@@ -762,7 +763,8 @@ def get_recording_speakers(recording_id: int) -> List[Dict[str, str]]:
 
         if row and row['speakers']:
             try:
-                return json.loads(row['speakers'])
+                speakers_list: List[Dict[str, str]] = json.loads(row['speakers'])
+                return speakers_list
             except (json.JSONDecodeError, TypeError, ValueError):
                 return []
 

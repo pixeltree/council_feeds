@@ -7,6 +7,7 @@ Can be run manually or scheduled via cron.
 import os
 import sys
 import logging
+from typing import Dict, Any
 from post_processor import PostProcessor
 import database as db
 from config import POST_PROCESS_SILENCE_THRESHOLD_DB, POST_PROCESS_MIN_SILENCE_DURATION
@@ -14,7 +15,7 @@ from config import POST_PROCESS_SILENCE_THRESHOLD_DB, POST_PROCESS_MIN_SILENCE_D
 logger = logging.getLogger(__name__)
 
 
-def process_unprocessed_recordings(limit: int = 50):
+def process_unprocessed_recordings(limit: int = 50) -> Dict[str, Any]:
     """
     Find and process all recordings that haven't been post-processed yet.
 

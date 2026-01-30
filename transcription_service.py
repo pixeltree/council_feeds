@@ -7,7 +7,7 @@ Uses Whisper for speech-to-text and pyannote.ai API for speaker diarization.
 import os
 import requests
 from faster_whisper import WhisperModel
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import timedelta
 import json
 import time
@@ -52,7 +52,7 @@ class TranscriptionService:
         # Lazy load Whisper model (only when needed)
         self._whisper_model = None
 
-    def _load_whisper_model(self):
+    def _load_whisper_model(self) -> Any:
         """Lazy load Whisper model."""
         if self._whisper_model is None:
             self.logger.info(f"Using device for Whisper: {self.device}")
@@ -77,7 +77,7 @@ class TranscriptionService:
         Returns:
             True if step is completed, False otherwise
         """
-        return steps.get(step_name, {}).get('status') == 'completed'
+        return bool(steps.get(step_name, {}).get('status') == 'completed')
 
     def transcribe_audio(self, audio_path: str, recording_id: Optional[int] = None, segment_number: Optional[int] = None) -> Dict:
         """
@@ -844,7 +844,7 @@ class TranscriptionService:
                 except OSError as e:
                     self.logger.warning(f"Could not remove audio file: {e}")
 
-    def save_transcript(self, transcript: Dict, output_path: str):
+    def save_transcript(self, transcript: Dict, output_path: str) -> None:
         """
         Save transcript to JSON file.
 

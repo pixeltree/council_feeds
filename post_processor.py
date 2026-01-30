@@ -295,8 +295,8 @@ class PostProcessor:
             self.logger.info("No breaks detected - keeping original file")
             return []
 
-        segments = []
-        last_end = 0
+        segments: List[Tuple[float, float]] = []
+        last_end: float = 0.0
 
         for silence_start, silence_end in silent_periods:
             # Add segment before this silence (if significant)
