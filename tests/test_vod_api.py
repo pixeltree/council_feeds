@@ -41,12 +41,14 @@ class TestVodImportAPI:
     """Test VOD import API endpoint."""
 
     @patch('web_server.threading.Thread')
+    @patch('web_server.db.update_recording')
     @patch('web_server.db.create_recording')
     @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_success(self, mock_vod_service_class, mock_save_meetings,
-                                mock_find_meeting, mock_create_recording, mock_thread, client):
+                                mock_find_meeting, mock_create_recording, mock_update_recording,
+                                mock_thread, client):
         """Test successful VOD import request."""
         # Setup mocks
         mock_vod_service = Mock()
@@ -124,12 +126,14 @@ class TestVodImportAPI:
         assert 'extract' in data['message'].lower() or 'failed' in data['message'].lower()
 
     @patch('web_server.threading.Thread')
+    @patch('web_server.db.update_recording')
     @patch('web_server.db.create_recording')
     @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_with_title_override(self, mock_vod_service_class, mock_save_meetings,
-                                            mock_find_meeting, mock_create_recording, mock_thread, client):
+                                            mock_find_meeting, mock_create_recording, mock_update_recording,
+                                            mock_thread, client):
         """Test import with custom title override."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
@@ -154,12 +158,14 @@ class TestVodImportAPI:
         assert call_args[0]['title'] == 'Custom Meeting Title'
 
     @patch('web_server.threading.Thread')
+    @patch('web_server.db.update_recording')
     @patch('web_server.db.create_recording')
     @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_with_date_override(self, mock_vod_service_class, mock_save_meetings,
-                                           mock_find_meeting, mock_create_recording, mock_thread, client):
+                                           mock_find_meeting, mock_create_recording, mock_update_recording,
+                                           mock_thread, client):
         """Test import with custom date override."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
@@ -272,13 +278,15 @@ class TestVodImportAPI:
         assert response.status_code in [400, 415]  # Bad Request or Unsupported Media Type
 
     @patch('web_server.threading.Thread')
+    @patch('web_server.db.update_recording')
     @patch('web_server.db.create_recording')
     @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_recording_status_initialized(self, mock_vod_service_class,
                                                       mock_save_meetings, mock_find_meeting,
-                                                      mock_create_recording, mock_thread, client):
+                                                      mock_create_recording, mock_update_recording,
+                                                      mock_thread, client):
         """Test that recording is created with 'downloading' status."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
