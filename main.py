@@ -4,6 +4,10 @@ import time
 import threading
 from datetime import datetime
 import schedule
+import logging
+
+# Import logging configuration
+from logging_config import setup_logging
 
 # Import database functions
 import database as db
@@ -39,16 +43,18 @@ recording_service = RecordingService(stream_service=stream_service)
 
 def daily_calendar_refresh():
     """Scheduled task: Refresh calendar at midnight."""
+    logger = logging.getLogger(__name__)
     now = datetime.now(CALGARY_TZ)
-    print(f"\n[{now.strftime('%H:%M:%S')}] 📅 SCHEDULED TASK: Daily calendar refresh at midnight")
+    logger.info(f"\n[{now.strftime('%H:%M:%S')}] SCHEDULED TASK: Daily calendar refresh at midnight")
     calendar_refresh_state.request()
 
 def run_scheduler():
     """Run the scheduler in a separate thread."""
+    logger = logging.getLogger(__name__)
     # Schedule daily calendar refresh at midnight Calgary time
     schedule.every().day.at("00:00").do(daily_calendar_refresh)
 
-    print(f"📅 Scheduler initialized: Calendar refresh at 00:00 (midnight) Calgary time")
+    logger.info(f"Scheduler initialized: Calendar refresh at 00:00 (midnight) Calgary time")
 
     while True:
         schedule.run_pending()
@@ -56,26 +62,33 @@ def run_scheduler():
 
 def main():
     """Main monitoring loop with smart scheduling."""
-    print("=" * 70)
-    print("Calgary Council Stream Recorder - Smart Scheduler Edition")
-    print("=" * 70)
-    print(f"Stream URL: {STREAM_PAGE_URL}")
-    print(f"Output directory: {OUTPUT_DIR}")
-    print(f"Database: {db.DB_PATH}")
-    print(f"Active polling: every {ACTIVE_CHECK_INTERVAL}s (during meeting windows)")
-    print(f"Idle polling: every {IDLE_CHECK_INTERVAL}s (outside meeting windows)")
-    print(f"Meeting buffer: {MEETING_BUFFER_BEFORE.seconds//60} min before, {MEETING_BUFFER_AFTER.seconds//3600} hours after")
-    print(f"Web interface: http://0.0.0.0:5000")
-    print("-" * 70)
+    # Initialize logging first
+    log_level = os.environ.get('LOG_LEVEL', 'INFO')
+    log_dir = os.environ.get('LOG_DIR', './logs')
+    setup_logging(log_level=log_level, log_dir=log_dir)
+
+    logger = logging.getLogger(__name__)
+
+    logger.info("=" * 70)
+    logger.info("Calgary Council Stream Recorder - Smart Scheduler Edition")
+    logger.info("=" * 70)
+    logger.info(f"Stream URL: {STREAM_PAGE_URL}")
+    logger.info(f"Output directory: {OUTPUT_DIR}")
+    logger.info(f"Database: {db.DB_PATH}")
+    logger.info(f"Active polling: every {ACTIVE_CHECK_INTERVAL}s (during meeting windows)")
+    logger.info(f"Idle polling: every {IDLE_CHECK_INTERVAL}s (outside meeting windows)")
+    logger.info(f"Meeting buffer: {MEETING_BUFFER_BEFORE.seconds//60} min before, {MEETING_BUFFER_AFTER.seconds//3600} hours after")
+    logger.info(f"Web interface: http://0.0.0.0:5000")
+    logger.info("-" * 70)
 
     # Check if monitoring should auto-start
     auto_start = os.environ.get('AUTO_START_MONITORING', 'false').lower() == 'true'
     monitoring_state.enabled = auto_start
     if auto_start:
-        print("🟢 Auto-start monitoring: ENABLED")
+        logger.info("Auto-start monitoring: ENABLED")
     else:
-        print("🔴 Auto-start monitoring: DISABLED - Use web interface to start")
-    print("-" * 70)
+        logger.info("Auto-start monitoring: DISABLED - Use web interface to start")
+    logger.info("-" * 70)
 
     # Set recording service in web server so it can stop recordings
     web_server.set_recording_service(recording_service)
@@ -83,8 +96,8 @@ def main():
     # Start web server in background thread
     web_thread = threading.Thread(target=web_server.run_server, daemon=True)
     web_thread.start()
-    print("Web server started on http://0.0.0.0:5000")
-    print("-" * 70)
+    logger.info("Web server started on http://0.0.0.0:5000")
+    logger.info("-" * 70)
 
     # Initialize database
     db.init_database()
@@ -96,28 +109,28 @@ def main():
     # Show recording statistics
     stats = db.get_recording_stats()
     if stats['total_recordings'] > 0:
-        print(f"\nRecording Statistics:")
-        print(f"  Total recordings: {stats['total_recordings']}")
-        print(f"  Completed: {stats['completed']}")
-        print(f"  Failed: {stats['failed']}")
-        print(f"  Total size: {stats['total_size_gb']} GB")
-        print("-" * 70)
+        logger.info("\nRecording Statistics:")
+        logger.info(f"  Total recordings: {stats['total_recordings']}")
+        logger.info(f"  Completed: {stats['completed']}")
+        logger.info(f"  Failed: {stats['failed']}")
+        logger.info(f"  Total size: {stats['total_size_gb']} GB")
+        logger.info("-" * 70)
 
     # Fetch initial meeting schedule
     meetings = calendar_service.get_upcoming_meetings()
 
     if meetings:
-        print("\nUpcoming meetings:")
+        logger.info("\nUpcoming meetings:")
         for i, meeting in enumerate(meetings[:5], 1):  # Show first 5
             room = meeting.get('room', 'Unknown')
-            print(f"  {i}. {meeting['title']} [{room}]")
-            print(f"     {meeting['raw_date']}")
+            logger.info(f"  {i}. {meeting['title']} [{room}]")
+            logger.info(f"     {meeting['raw_date']}")
         if len(meetings) > 5:
-            print(f"  ... and {len(meetings) - 5} more")
+            logger.info(f"  ... and {len(meetings) - 5} more")
     else:
-        print("\nNo upcoming meetings found. Will poll periodically.")
+        logger.info("\nNo upcoming meetings found. Will poll periodically.")
 
-    print("-" * 70)
+    logger.info("-" * 70)
 
     active_mode = False
 
@@ -132,7 +145,7 @@ def main():
 
             # Refresh calendar if scheduled task requested it
             if calendar_refresh_state.requested:
-                print(f"[{current_time.strftime('%H:%M:%S')}] Processing scheduled calendar refresh...")
+                logger.info(f"[{current_time.strftime('%H:%M:%S')}] Processing scheduled calendar refresh...")
                 meetings = calendar_service.get_upcoming_meetings(force_refresh=True)
                 calendar_refresh_state.clear()
 
@@ -141,24 +154,24 @@ def main():
 
             # Log mode changes
             if in_window and not active_mode:
-                print(f"\n{'='*70}")
-                print(f"⚡ ACTIVE MODE: Meeting window detected!")
-                print(f"   Meeting: {current_meeting['title']}")
-                print(f"   Scheduled: {current_meeting['raw_date']}")
-                print(f"   Polling every {ACTIVE_CHECK_INTERVAL} seconds")
-                print(f"{'='*70}\n")
+                logger.info(f"\n{'='*70}")
+                logger.info(f"ACTIVE MODE: Meeting window detected!")
+                logger.info(f"   Meeting: {current_meeting['title']}")
+                logger.info(f"   Scheduled: {current_meeting['raw_date']}")
+                logger.info(f"   Polling every {ACTIVE_CHECK_INTERVAL} seconds")
+                logger.info(f"{'='*70}\n")
                 active_mode = True
             elif not in_window and active_mode:
                 next_meeting = meeting_scheduler.get_next_meeting(current_time, meetings)
-                print(f"\n{'='*70}")
-                print(f"💤 IDLE MODE: Meeting window ended")
+                logger.info(f"\n{'='*70}")
+                logger.info(f"IDLE MODE: Meeting window ended")
                 if next_meeting:
                     time_until = next_meeting['datetime'] - current_time
                     hours = int(time_until.total_seconds() // 3600)
                     minutes = int((time_until.total_seconds() % 3600) // 60)
-                    print(f"   Next meeting in {hours}h {minutes}m: {next_meeting['title']}")
-                print(f"   Polling every {IDLE_CHECK_INTERVAL} seconds")
-                print(f"{'='*70}\n")
+                    logger.info(f"   Next meeting in {hours}h {minutes}m: {next_meeting['title']}")
+                logger.info(f"   Polling every {IDLE_CHECK_INTERVAL} seconds")
+                logger.info(f"{'='*70}\n")
                 active_mode = False
 
             # Check for stream - pass room info if available
@@ -167,28 +180,28 @@ def main():
 
             if stream_url:
                 if stream_service.is_stream_live(stream_url):
-                    mode_label = "🔴 ACTIVE" if active_mode else "IDLE"
+                    mode_label = "ACTIVE" if active_mode else "IDLE"
                     room_label = f" ({meeting_room})" if meeting_room else ""
-                    print(f"[{current_time.strftime('%H:%M:%S')}] [{mode_label}] Stream is LIVE{room_label}! Starting recording...")
+                    logger.info(f"[{current_time.strftime('%H:%M:%S')}] [{mode_label}] Stream is LIVE{room_label}! Starting recording...")
                     recording_service.record_stream(stream_url, current_meeting)
-                    print(f"[{current_time.strftime('%H:%M:%S')}] Recording completed. Resuming monitoring...")
+                    logger.info(f"[{current_time.strftime('%H:%M:%S')}] Recording completed. Resuming monitoring...")
                 else:
                     if active_mode:  # Only log during active mode to reduce noise
-                        print(f"[{current_time.strftime('%H:%M:%S')}] [🔴 ACTIVE] Stream found but not live yet...")
+                        logger.info(f"[{current_time.strftime('%H:%M:%S')}] [ACTIVE] Stream found but not live yet...")
             else:
                 if active_mode:  # Only log during active mode
                     room_label = f" ({meeting_room})" if meeting_room else ""
-                    print(f"[{current_time.strftime('%H:%M:%S')}] [🔴 ACTIVE] No stream URL found{room_label}...")
+                    logger.info(f"[{current_time.strftime('%H:%M:%S')}] [ACTIVE] No stream URL found{room_label}...")
 
             # Dynamic sleep interval
             check_interval = ACTIVE_CHECK_INTERVAL if active_mode else IDLE_CHECK_INTERVAL
             time.sleep(check_interval)
 
         except KeyboardInterrupt:
-            print("\n\nShutting down recorder...")
+            logger.info("\n\nShutting down recorder...")
             break
         except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error: {e}")
+            logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error: {e}", exc_info=True)
             time.sleep(ACTIVE_CHECK_INTERVAL)  # Use shorter interval on error
 
 if __name__ == '__main__':

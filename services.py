@@ -4,6 +4,7 @@ Service classes for Calgary Council Stream Recorder.
 Separates business logic from main application flow for better testability.
 """
 
+import logging
 import requests
 import subprocess
 import re
@@ -53,6 +54,7 @@ class CalendarService:
     def __init__(self, api_url: str = COUNCIL_CALENDAR_API, timezone=CALGARY_TZ):
         self.api_url = api_url
         self.timezone = timezone
+        self.logger = logging.getLogger(__name__)
 
     def determine_room(self, title: str) -> str:
         """Determine meeting room based on title."""
@@ -94,7 +96,7 @@ class CalendarService:
                         'room': room
                     })
                 except (ValueError, TypeError) as e:
-                    print(f"Warning: Could not parse date '{date_str}': {e}")
+                    self.logger.warning(f"Could not parse date '{date_str}': {e}")
                     continue
 
             # Sort by datetime
@@ -103,7 +105,7 @@ class CalendarService:
             return all_meetings
 
         except Exception as e:
-            print(f"Error fetching council meetings: {e}")
+            self.logger.error(f"Error fetching council meetings: {e}", exc_info=True)
             return []
 
     def get_upcoming_meetings(self, force_refresh: bool = False) -> List[Dict]:
@@ -122,7 +124,7 @@ class CalendarService:
                 if last_refresh_dt.tzinfo is None:
                     last_refresh_dt = self.timezone.localize(last_refresh_dt)
 
-                print(f"Using cached meeting schedule (last updated: {last_refresh_dt.strftime('%Y-%m-%d %H:%M %Z')})")
+                self.logger.info(f"Using cached meeting schedule (last updated: {last_refresh_dt.strftime('%Y-%m-%d %H:%M %Z')})")
             except (ValueError, TypeError):
                 needs_refresh = True
         else:
@@ -130,14 +132,14 @@ class CalendarService:
 
         # Fetch fresh data if needed
         if needs_refresh:
-            print("Fetching fresh meeting schedule from Calgary Open Data API...")
+            self.logger.info("Fetching fresh meeting schedule from Calgary Open Data API...")
             meetings = self.fetch_council_meetings()
 
             if meetings:
                 # Save to database
                 saved_count = db.save_meetings(meetings)
                 db.set_metadata('last_calendar_refresh', now.isoformat())
-                print(f"Saved {saved_count} Council meetings to database")
+                self.logger.info(f"Saved {saved_count} Council meetings to database")
 
         # Always return from database to ensure consistency
         return db.get_upcoming_meetings()
@@ -193,6 +195,7 @@ class StreamService:
         self.stream_page_url = stream_page_url
         self.stream_url_patterns = stream_url_patterns or STREAM_URL_PATTERNS
         self.ytdlp_command = ytdlp_command
+        self.logger = logging.getLogger(__name__)
 
     def get_stream_url(self, room: Optional[str] = None) -> Optional[str]:
         """Extract the HLS stream URL using yt-dlp or try common patterns.
@@ -205,7 +208,7 @@ class StreamService:
         if room and room in STREAM_URLS_BY_ROOM:
             # Try room-specific URLs first
             patterns_to_try = STREAM_URLS_BY_ROOM[room]
-            print(f"Trying {room} stream URLs...")
+            self.logger.info(f"Trying {room} stream URLs...")
         else:
             # Fall back to all patterns
             patterns_to_try = self.stream_url_patterns
@@ -221,21 +224,21 @@ class StreamService:
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     url = result.stdout.strip()
-                    print(f"yt-dlp found stream: {url}")
+                    self.logger.info(f"yt-dlp found stream: {url}")
                     return url
             except subprocess.TimeoutExpired:
-                print("yt-dlp timed out")
+                self.logger.warning("yt-dlp timed out")
             except FileNotFoundError:
-                print("yt-dlp not found, trying manual methods...")
+                self.logger.warning("yt-dlp not found, trying manual methods...")
             except Exception as e:
-                print(f"yt-dlp error: {e}")
+                self.logger.error(f"yt-dlp error: {e}", exc_info=True)
 
         # Try room-specific or common ISILive URL patterns
         for pattern_url in patterns_to_try:
             try:
                 response = requests.head(pattern_url, timeout=5, allow_redirects=True)
                 if response.status_code == 200:
-                    print(f"Found working stream pattern: {pattern_url}")
+                    self.logger.info(f"Found working stream pattern: {pattern_url}")
                     return pattern_url
             except Exception:
                 # Try next pattern if this one fails
@@ -266,7 +269,7 @@ class StreamService:
 
             return None
         except Exception as e:
-            print(f"Error fetching stream URL: {e}")
+            self.logger.error(f"Error fetching stream URL: {e}", exc_info=True)
             return None
 
     def is_stream_live(self, stream_url: str) -> bool:
@@ -303,6 +306,7 @@ class RecordingService:
         self.current_process = None
         self.current_recording_id = None
         self.stop_requested = False
+        self.logger = logging.getLogger(__name__)
 
     def record_stream(
         self,
@@ -336,9 +340,9 @@ class RecordingService:
         os.makedirs(self.output_dir, exist_ok=True)
 
         if output_pattern:
-            print(f"Starting segmented recording: {output_pattern}")
+            self.logger.info(f"Starting segmented recording: {output_pattern}")
         else:
-            print(f"Starting recording: {output_file}")
+            self.logger.info(f"Starting recording: {output_file}")
 
         # Find associated meeting in database
         meeting_id = None
@@ -346,7 +350,7 @@ class RecordingService:
             db_meeting = db.find_meeting_by_datetime(current_meeting['datetime'])
             if db_meeting:
                 meeting_id = db_meeting['id']
-                print(f"Associated with meeting: {db_meeting['title']}")
+                self.logger.info(f"Associated with meeting: {db_meeting['title']}")
 
         # Create recording record in database
         recording_id = db.create_recording(meeting_id, output_file, stream_url, start_time)
@@ -408,7 +412,7 @@ class RecordingService:
             )
             self.current_process = process
 
-            print(f"Recording started (PID: {process.pid})")
+            self.logger.info(f"Recording started (PID: {process.pid})")
 
             # Monitor the process
             import time
@@ -463,37 +467,37 @@ class RecordingService:
                                         # Ignore parsing errors in ffmpeg output; leave max_volume as None
                                         pass
 
-                            print(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                            self.logger.debug(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
 
                             # If audio is very quiet, likely static placeholder
                             # Use same thresholds as post-processing for consistency
                             if mean_volume and max_volume:
                                 if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
                                     static_checks += 1
-                                    print(f"Warning: Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
+                                    self.logger.warning(f"Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
 
                                     if static_checks >= STATIC_MAX_FAILURES:
-                                        print("Stream appears to be static (no audio/placeholder). Stopping recording...")
+                                        self.logger.warning("Stream appears to be static (no audio/placeholder). Stopping recording...")
                                         db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
                                         self.stop_requested = True
                                 else:
                                     if static_checks > 0:
-                                        print(f"[STATIC CHECK] Audio detected, resetting counter")
+                                        self.logger.info("[STATIC CHECK] Audio detected, resetting counter")
                                     static_checks = 0  # Reset counter if audio detected
                             else:
-                                print(f"[STATIC CHECK] Could not parse audio levels")
+                                self.logger.warning("[STATIC CHECK] Could not parse audio levels")
 
                         except subprocess.TimeoutExpired:
-                            print(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_to_check)} - file may be corrupted or very large, skipping check")
+                            self.logger.warning(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_to_check)} - file may be corrupted or very large, skipping check")
                         except subprocess.CalledProcessError as e:
-                            print(f"[STATIC CHECK] Audio detection failed (ffmpeg error): {e}")
+                            self.logger.error(f"[STATIC CHECK] Audio detection failed (ffmpeg error): {e}", exc_info=True)
                         except Exception as e:
-                            print(f"[STATIC CHECK] Audio detection failed: {e}")
+                            self.logger.error(f"[STATIC CHECK] Audio detection failed: {e}", exc_info=True)
 
                 # Check if stop was requested
                 if self.stop_requested:
-                    print("Stop requested by user. Stopping recording...")
-                    print("Sending interrupt signal to ffmpeg to close file properly...")
+                    self.logger.info("Stop requested by user. Stopping recording...")
+                    self.logger.info("Sending interrupt signal to ffmpeg to close file properly...")
                     db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
 
                     # Send SIGINT (Ctrl+C) to ffmpeg for clean shutdown
@@ -506,22 +510,22 @@ class RecordingService:
                         process.terminate()
 
                     # Wait up to 10 seconds for ffmpeg to finish writing
-                    print("Waiting for ffmpeg to finish writing file...")
+                    self.logger.info("Waiting for ffmpeg to finish writing file...")
                     for i in range(10):
                         time.sleep(1)
                         if process.poll() is not None:
-                            print(f"Recording stopped cleanly after {i+1} seconds")
+                            self.logger.info(f"Recording stopped cleanly after {i+1} seconds")
                             break
 
                     # If still running, force kill
                     if process.poll() is None:
-                        print("Warning: ffmpeg did not stop gracefully, forcing kill...")
+                        self.logger.warning("ffmpeg did not stop gracefully, forcing kill...")
                         process.kill()
                         time.sleep(1)
                     break
 
                 if not self.stream_service.is_stream_live(stream_url):
-                    print("Stream is no longer live. Stopping recording...")
+                    self.logger.info("Stream is no longer live. Stopping recording...")
                     db.log_stream_status(stream_url, 'offline', meeting_id, 'Stream ended')
 
                     # Send SIGINT for clean shutdown
@@ -533,22 +537,22 @@ class RecordingService:
                         process.terminate()
 
                     # Wait for ffmpeg to finish writing
-                    print("Waiting for ffmpeg to finish writing file...")
+                    self.logger.info("Waiting for ffmpeg to finish writing file...")
                     for i in range(10):
                         time.sleep(1)
                         if process.poll() is not None:
-                            print(f"Recording completed cleanly after {i+1} seconds")
+                            self.logger.info(f"Recording completed cleanly after {i+1} seconds")
                             break
 
                     if process.poll() is None:
-                        print("Warning: forcing kill...")
+                        self.logger.warning("forcing kill...")
                         process.kill()
                         time.sleep(1)
                     break
 
                 # Check if process is still running
                 if process.poll() is not None:
-                    print("Recording process ended")
+                    self.logger.info("Recording process ended")
                     break
 
             end_time = datetime.now(self.timezone)
@@ -559,25 +563,25 @@ class RecordingService:
 
             # If segmented, merge segments into single file
             if ENABLE_SEGMENTED_RECORDING and output_pattern:
-                print("Merging recording segments...")
+                self.logger.info("Merging recording segments...")
                 merged_file = self._merge_segments(output_pattern, output_file, timestamp, format_ext)
                 if merged_file:
                     output_file = merged_file
-                    print(f"Recording saved: {output_file}")
+                    self.logger.info(f"Recording saved: {output_file}")
                 else:
-                    print(f"Warning: Could not merge segments, keeping individual segments")
+                    self.logger.warning("Could not merge segments, keeping individual segments")
             else:
-                print(f"Recording saved: {output_file}")
+                self.logger.info(f"Recording saved: {output_file}")
 
             # Check if recording has any content before marking as completed
             has_content = False
             if os.path.exists(output_file):
                 file_size = os.path.getsize(output_file)
                 duration = int((end_time - start_time).total_seconds())
-                print(f"Duration: {duration}s, Size: {file_size / (1024**2):.1f} MB")
+                self.logger.info(f"Duration: {duration}s, Size: {file_size / (1024**2):.1f} MB")
 
                 # Check for audio content using volumedetect
-                print("Checking if recording has audio content...")
+                self.logger.info("Checking if recording has audio content...")
                 try:
                     result = subprocess.run(
                         [self.ffmpeg_command, '-i', output_file, '-af', 'volumedetect', '-f', 'null', '-'],
@@ -603,33 +607,33 @@ class RecordingService:
                                 pass
 
                     if mean_volume and max_volume:
-                        print(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                        self.logger.info(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
                         # If audio is reasonably loud, it has content
                         if mean_volume > -50 or max_volume > -30:
                             has_content = True
                         else:
-                            print("Recording appears to have no real audio content (levels too low)")
+                            self.logger.warning("Recording appears to have no real audio content (levels too low)")
                     else:
-                        print("Warning: Could not detect audio levels, assuming has content")
+                        self.logger.warning("Could not detect audio levels, assuming has content")
                         has_content = True  # Default to keeping if check fails
 
                 except Exception as e:
-                    print(f"Warning: Audio check failed: {e}, assuming has content")
+                    self.logger.warning(f"Audio check failed: {e}, assuming has content")
                     has_content = True  # Default to keeping if check fails
 
             # If no content, remove the recording
             if not has_content:
-                print("No audio content detected - removing empty recording")
+                self.logger.warning("No audio content detected - removing empty recording")
                 try:
                     if os.path.exists(output_file):
                         os.remove(output_file)
-                        print(f"Removed empty recording file: {output_file}")
+                        self.logger.info(f"Removed empty recording file: {output_file}")
                 except Exception as e:
-                    print(f"Warning: Could not delete file: {e}")
+                    self.logger.error(f"Could not delete file: {e}", exc_info=True)
 
                 # Mark recording as failed in database
                 db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
-                print("Recording marked as failed (no content)")
+                self.logger.info("Recording marked as failed (no content)")
                 return True  # Return success since we handled it properly
 
             # Update recording status in database as completed
@@ -639,7 +643,7 @@ class RecordingService:
 
             # Post-processing (experimental)
             if ENABLE_POST_PROCESSING:
-                print("\n[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
+                self.logger.info("[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
                 try:
                     from post_processor import PostProcessor
                     processor = PostProcessor(
@@ -649,20 +653,20 @@ class RecordingService:
                     )
                     result = processor.process_recording(output_file, recording_id)
                     if result.get('success'):
-                        print(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
+                        self.logger.info(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
                     elif result.get('deleted'):
-                        print(f"[POST-PROCESS] Recording removed: {result.get('message', 'No audio detected')}")
+                        self.logger.warning(f"[POST-PROCESS] Recording removed: {result.get('message', 'No audio detected')}")
                         # Skip transcription since file was deleted
                         return True
                     else:
-                        print(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
+                        self.logger.error(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
                 except Exception as e:
-                    print(f"[POST-PROCESS] Error during post-processing: {e}")
-                    print("[POST-PROCESS] Original recording preserved")
+                    self.logger.error(f"[POST-PROCESS] Error during post-processing: {e}", exc_info=True)
+                    self.logger.info("[POST-PROCESS] Original recording preserved")
 
             # Transcription (optional)
             if ENABLE_TRANSCRIPTION:
-                print("\n[TRANSCRIPTION] Transcription enabled - generating transcript with speaker diarization")
+                self.logger.info("[TRANSCRIPTION] Transcription enabled - generating transcript with speaker diarization")
                 try:
                     from transcription_service import TranscriptionService
                     transcriber = TranscriptionService(
@@ -679,22 +683,22 @@ class RecordingService:
                     with open(text_output, 'w', encoding='utf-8') as f:
                         f.write(formatted_text)
 
-                    print(f"[TRANSCRIPTION] Successfully transcribed with {transcript_result['num_speakers']} speakers")
-                    print(f"[TRANSCRIPTION] Transcript saved to: {text_output}")
+                    self.logger.info(f"[TRANSCRIPTION] Successfully transcribed with {transcript_result['num_speakers']} speakers")
+                    self.logger.info(f"[TRANSCRIPTION] Transcript saved to: {text_output}")
 
                     # Update database with transcript path
                     if recording_id:
                         db.update_recording_transcript(recording_id, output_file + '.transcript.json')
 
                 except Exception as e:
-                    print(f"[TRANSCRIPTION] Error during transcription: {e}")
-                    print("[TRANSCRIPTION] Recording preserved, transcription skipped")
+                    self.logger.error(f"[TRANSCRIPTION] Error during transcription: {e}", exc_info=True)
+                    self.logger.info("[TRANSCRIPTION] Recording preserved, transcription skipped")
 
             return True
 
         except Exception as e:
             error_msg = str(e)
-            print(f"Error during recording: {error_msg}")
+            self.logger.error(f"Error during recording: {error_msg}", exc_info=True)
 
             # Clean up process tracking
             self.current_process = None
@@ -716,7 +720,7 @@ class RecordingService:
         segments = sorted(glob.glob(os.path.join(segment_dir, segment_pattern)))
 
         if not segments:
-            print("Warning: No segments found to merge")
+            self.logger.warning("No segments found to merge")
             return None
 
         if len(segments) == 1:
@@ -725,7 +729,7 @@ class RecordingService:
                 os.rename(segments[0], output_file)
                 return output_file
             except Exception as e:
-                print(f"Error renaming single segment: {e}")
+                self.logger.error(f"Error renaming single segment: {e}", exc_info=True)
                 return segments[0]
 
         # Create concat file list for ffmpeg
@@ -762,11 +766,11 @@ class RecordingService:
                     pass
                 return output_file
             else:
-                print(f"Warning: Merge failed: {result.stderr}")
+                self.logger.error(f"Merge failed: {result.stderr}")
                 return None
 
         except Exception as e:
-            print(f"Error merging segments: {e}")
+            self.logger.error(f"Error merging segments: {e}", exc_info=True)
             return None
 
     def stop_recording(self) -> bool:

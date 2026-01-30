@@ -10,6 +10,7 @@ Original recordings are always preserved.
 import os
 import subprocess
 import json
+import logging
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 import re
@@ -42,6 +43,7 @@ class PostProcessor:
         self.min_silence_duration = min_silence_duration
         self.ffmpeg_command = ffmpeg_command
         self.ffprobe_command = ffprobe_command
+        self.logger = logging.getLogger(__name__)
 
     def detect_silent_periods(self, video_path: str, recording_id: Optional[int] = None) -> List[Tuple[float, float]]:
         """
@@ -51,7 +53,7 @@ class PostProcessor:
             List of (start_time, end_time) tuples in seconds
         """
         msg = f"Analyzing audio for silent periods (threshold: {self.silence_threshold_db}dB, min duration: {self.min_silence_duration}s)"
-        print(f"[POST-PROCESS] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
@@ -93,7 +95,7 @@ class PostProcessor:
                 duration = end - start
                 silent_periods.append((start, end))
                 msg = f"Found silence: {start:.1f}s - {end:.1f}s (duration: {duration:.1f}s)"
-                print(f"[POST-PROCESS] {msg}")
+                self.logger.info(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'info')
 
@@ -101,13 +103,13 @@ class PostProcessor:
 
         except subprocess.TimeoutExpired:
             msg = "Analysis timed out"
-            print(f"[POST-PROCESS] Warning: {msg}")
+            self.logger.warning(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'warning')
             return []
         except Exception as e:
             msg = f"Error detecting silent periods: {e}"
-            print(f"[POST-PROCESS] {msg}")
+            self.logger.error(msg, exc_info=True)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'error')
             return []
@@ -120,7 +122,7 @@ class PostProcessor:
             True if audio is detected, False if entire file is silent/no audio
         """
         msg = "Checking for audio content in entire file"
-        print(f"[POST-PROCESS] {msg}...")
+        self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
@@ -161,13 +163,13 @@ class PostProcessor:
             # If we couldn't detect audio levels or they're extremely low, no audio
             if mean_volume is None and max_volume is None:
                 msg = "No audio stream detected"
-                print(f"[POST-PROCESS] {msg}")
+                self.logger.warning(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'warning')
                 return False
 
             msg = f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB"
-            print(f"[POST-PROCESS] {msg}")
+            self.logger.info(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'info')
 
@@ -176,7 +178,7 @@ class PostProcessor:
             if mean_volume and max_volume:
                 if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
                     msg = "Audio levels too low - appears to be silent recording"
-                    print(f"[POST-PROCESS] {msg}")
+                    self.logger.warning(msg)
                     if recording_id:
                         db.add_recording_log(recording_id, msg, 'warning')
                     return False
@@ -185,13 +187,13 @@ class PostProcessor:
 
         except subprocess.TimeoutExpired:
             msg = "Audio detection timed out"
-            print(f"[POST-PROCESS] Warning: {msg}")
+            self.logger.warning(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'warning')
             return True  # Assume has audio if check fails
         except Exception as e:
             msg = f"Error detecting audio: {e}"
-            print(f"[POST-PROCESS] {msg}")
+            self.logger.error(msg, exc_info=True)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'error')
             return True  # Assume has audio if check fails
@@ -210,20 +212,20 @@ class PostProcessor:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if result.returncode != 0:
-                print(f"[POST-PROCESS] ffprobe error: {result.stderr}")
+                self.logger.error(f"ffprobe error: {result.stderr}")
                 return 0
             data = json.loads(result.stdout)
             if 'format' in data and 'duration' in data['format']:
                 return float(data['format']['duration'])
         except json.JSONDecodeError as e:
-            print(f"[POST-PROCESS] Warning: Could not parse ffprobe output: {e}")
+            self.logger.warning(f"Could not parse ffprobe output: {e}")
         except Exception as e:
-            print(f"[POST-PROCESS] Warning: Error getting format duration: {e}")
+            self.logger.warning(f"Error getting format duration: {e}")
 
         # If format duration not available, try decoding the file to get duration
         # This works for files with incomplete metadata
         msg = "Format duration not available, calculating from file"
-        print(f"[POST-PROCESS] {msg}...")
+        self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
         cmd = [
@@ -238,7 +240,7 @@ class PostProcessor:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
-                print(f"[POST-PROCESS] ffprobe error: {result.stderr}")
+                self.logger.error(f"ffprobe error: {result.stderr}")
                 return 0
 
             data = json.loads(result.stdout)
@@ -249,11 +251,11 @@ class PostProcessor:
                     if stream.get('codec_type') == 'video' and 'duration' in stream:
                         duration = float(stream['duration'])
                         if duration > 0:
-                            print(f"[POST-PROCESS] Got duration from video stream: {duration}s")
+                            self.logger.info(f"Got duration from video stream: {duration}s")
                             return duration
 
             # If still no duration, use ffmpeg to decode and count frames
-            print(f"[POST-PROCESS] Calculating duration by decoding file (may take a while)...")
+            self.logger.info("Calculating duration by decoding file (may take a while)")
             cmd = [
                 self.ffmpeg_command,
                 '-i', video_path,
@@ -268,13 +270,13 @@ class PostProcessor:
             if duration_match:
                 hours, minutes, seconds = duration_match.groups()
                 duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-                print(f"[POST-PROCESS] Calculated duration: {duration}s")
+                self.logger.info(f"Calculated duration: {duration}s")
                 return duration
 
         except subprocess.TimeoutExpired:
-            print("[POST-PROCESS] Warning: Duration calculation timed out")
+            self.logger.warning("Duration calculation timed out")
         except Exception as e:
-            print(f"[POST-PROCESS] Warning: Could not get video duration: {e}")
+            self.logger.warning(f"Could not get video duration: {e}")
 
         return 0
 
@@ -290,7 +292,7 @@ class PostProcessor:
             List of (start, end) tuples for active segments
         """
         if not silent_periods:
-            print("[POST-PROCESS] No breaks detected - keeping original file")
+            self.logger.info("No breaks detected - keeping original file")
             return []
 
         segments = []
@@ -337,13 +339,13 @@ class PostProcessor:
             subprocess.run(cmd, capture_output=True, check=True, timeout=duration * 2)
             return True
         except subprocess.TimeoutExpired:
-            print(f"[POST-PROCESS] Error extracting segment: timeout")
+            self.logger.error("Error extracting segment: timeout")
             return False
         except subprocess.CalledProcessError as e:
-            print(f"[POST-PROCESS] Error extracting segment: {e}")
+            self.logger.error(f"Error extracting segment: {e}")
             return False
         except Exception as e:
-            print(f"[POST-PROCESS] Error extracting segment: {e}")
+            self.logger.error(f"Error extracting segment: {e}", exc_info=True)
             return False
 
     def process_recording(self, recording_path: str, recording_id: Optional[int] = None) -> Dict:
@@ -357,10 +359,10 @@ class PostProcessor:
         Returns:
             Dictionary with processing results
         """
-        print(f"\n[POST-PROCESS] ========================================")
-        print(f"[POST-PROCESS] Starting post-processing")
-        print(f"[POST-PROCESS] Input: {recording_path}")
-        print(f"[POST-PROCESS] ========================================\n")
+        self.logger.info("========================================")
+        self.logger.info("Starting post-processing")
+        self.logger.info(f"Input: {recording_path}")
+        self.logger.info("========================================")
 
         # Mark as processing in database
         if recording_id:
@@ -368,11 +370,11 @@ class PostProcessor:
                 db.update_post_process_status(recording_id, 'processing')
                 db.add_recording_log(recording_id, 'Starting post-processing', 'info')
             except Exception as e:
-                print(f"[POST-PROCESS] Warning: Could not update status: {e}")
+                self.logger.warning(f"Could not update status: {e}")
 
         if not os.path.exists(recording_path):
             msg = f"File not found: {recording_path}"
-            print(f"[POST-PROCESS] Error: {msg}")
+            self.logger.error(msg)
             if recording_id:
                 try:
                     db.update_post_process_status(recording_id, 'failed', 'File not found')
@@ -386,7 +388,7 @@ class PostProcessor:
         duration = self.get_video_duration(recording_path, recording_id)
         if duration == 0:
             msg = "Could not determine video duration"
-            print(f"[POST-PROCESS] Error: {msg}")
+            self.logger.error(msg)
             if recording_id:
                 try:
                     db.update_post_process_status(recording_id, 'failed', msg)
@@ -397,14 +399,14 @@ class PostProcessor:
             return {"success": False, "error": "Could not determine duration"}
 
         msg = f"Total duration: {duration:.1f}s ({duration/60:.1f} minutes)"
-        print(f"[POST-PROCESS] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
         # Check if recording has any audio
         if not self.has_audio(recording_path, recording_id):
             msg = "No audio detected in entire recording - removing file"
-            print(f"[POST-PROCESS] {msg}")
+            self.logger.warning(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'warning')
 
@@ -412,12 +414,12 @@ class PostProcessor:
             try:
                 os.remove(recording_path)
                 msg = f"Deleted recording file: {recording_path}"
-                print(f"[POST-PROCESS] {msg}")
+                self.logger.info(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'info')
             except OSError as e:
                 msg = f"Could not delete file: {e}"
-                print(f"[POST-PROCESS] Warning: {msg}")
+                self.logger.warning(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'warning')
 
@@ -433,10 +435,10 @@ class PostProcessor:
                     # Use 'skipped' status since post-processing successfully determined there was no audio
                     db.update_post_process_status(recording_id, 'skipped', 'No audio detected - file removed')
                     db.add_recording_log(recording_id, 'Recording marked as failed in database', 'info')
-                    print(f"[POST-PROCESS] Recording marked as failed in database")
+                    self.logger.info("Recording marked as failed in database")
                 except Exception:
                     # Best-effort status update; ignore DB errors so they don't mask processing result
-                    print(f"[POST-PROCESS] Warning: Could not update database")
+                    self.logger.warning("Could not update database")
 
             return {
                 "success": False,
@@ -453,7 +455,7 @@ class PostProcessor:
 
         if not segments:
             msg = "No segmentation needed - no breaks detected"
-            print(f"[POST-PROCESS] {msg}")
+            self.logger.info(msg)
 
             if recording_id:
                 try:
@@ -480,7 +482,7 @@ class PostProcessor:
         # Copy original to segments folder for safety
         original_dest = os.path.join(output_dir, f"{base_name}_original.mp4")
         msg = f"Preserving original: {original_dest}"
-        print(f"[POST-PROCESS] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
@@ -488,7 +490,7 @@ class PostProcessor:
             import shutil
             shutil.copy2(recording_path, original_dest)
         except Exception as e:
-            print(f"[POST-PROCESS] Warning: Could not copy original: {e}")
+            self.logger.warning(f"Could not copy original: {e}")
 
         # Extract segments
         segment_files = []
@@ -497,7 +499,7 @@ class PostProcessor:
             output_path = os.path.join(output_dir, f"{base_name}_segment_{i}.mp4")
 
             msg = f"Extracting segment {i}/{len(segments)}: {start:.1f}s - {end:.1f}s ({segment_duration/60:.1f} min)"
-            print(f"[POST-PROCESS] {msg}")
+            self.logger.info(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'info')
 
@@ -529,19 +531,19 @@ class PostProcessor:
                             file_size_bytes=file_size_bytes
                         )
                         segment_info['db_id'] = segment_id
-                        msg = f"✓ Segment {i} created: {file_size_mb:.1f} MB (DB ID: {segment_id})"
-                        print(f"[POST-PROCESS] {msg}")
+                        msg = f"Segment {i} created: {file_size_mb:.1f} MB (DB ID: {segment_id})"
+                        self.logger.info(msg)
                         db.add_recording_log(recording_id, msg, 'info')
                     except Exception as e:
-                        msg = f"✓ Segment {i} created: {file_size_mb:.1f} MB (DB save failed: {e})"
-                        print(f"[POST-PROCESS] {msg}")
+                        msg = f"Segment {i} created: {file_size_mb:.1f} MB (DB save failed: {e})"
+                        self.logger.warning(msg)
                         if recording_id:
                             db.add_recording_log(recording_id, msg, 'warning')
                 else:
-                    print(f"[POST-PROCESS] ✓ Segment {i} created: {file_size_mb:.1f} MB")
+                    self.logger.info(f"Segment {i} created: {file_size_mb:.1f} MB")
             else:
-                msg = f"✗ Failed to create segment {i}"
-                print(f"[POST-PROCESS] {msg}")
+                msg = f"Failed to create segment {i}"
+                self.logger.error(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'error')
 
@@ -554,11 +556,11 @@ class PostProcessor:
                 db.mark_recording_segmented(recording_id)
                 db.update_post_process_status(recording_id, 'completed')
                 msg = "Recording marked as segmented in database"
-                print(f"[POST-PROCESS] {msg}")
+                self.logger.info(msg)
                 db.add_recording_log(recording_id, msg, 'info')
             except Exception as e:
                 msg = f"Could not mark recording as segmented: {e}"
-                print(f"[POST-PROCESS] Warning: {msg}")
+                self.logger.warning(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'error')
         elif recording_id:
@@ -570,12 +572,12 @@ class PostProcessor:
                 # Best-effort status update; ignore DB errors
                 pass
 
-        print(f"\n[POST-PROCESS] ========================================")
-        print(f"[POST-PROCESS] Processing complete")
-        print(f"[POST-PROCESS] Segments folder: {output_dir}")
-        print(f"[POST-PROCESS] Segments created: {len(segment_files)}/{len(segments)}")
-        print(f"[POST-PROCESS] Original preserved: {original_dest}")
-        print(f"[POST-PROCESS] ========================================\n")
+        self.logger.info("========================================")
+        self.logger.info("Processing complete")
+        self.logger.info(f"Segments folder: {output_dir}")
+        self.logger.info(f"Segments created: {len(segment_files)}/{len(segments)}")
+        self.logger.info(f"Original preserved: {original_dest}")
+        self.logger.info("========================================")
 
         return {
             "success": True,
@@ -590,8 +592,12 @@ if __name__ == "__main__":
     # Example usage / testing
     import sys
 
+    # Set up basic logging for standalone execution
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger = logging.getLogger(__name__)
+
     if len(sys.argv) < 2:
-        print("Usage: python post_processor.py <video_file>")
+        logger.error("Usage: python post_processor.py <video_file>")
         sys.exit(1)
 
     video_file = sys.argv[1]
@@ -599,6 +605,6 @@ if __name__ == "__main__":
     result = processor.process_recording(video_file)
 
     if result["success"]:
-        print(f"\nSuccess! Created {result.get('segments_created', 0)} segments")
+        logger.info(f"Success! Created {result.get('segments_created', 0)} segments")
     else:
-        print(f"\nFailed: {result.get('error', 'Unknown error')}")
+        logger.error(f"Failed: {result.get('error', 'Unknown error')}")

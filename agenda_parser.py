@@ -8,6 +8,9 @@ import requests
 from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def extract_speakers(
@@ -27,10 +30,10 @@ def extract_speakers(
     """
     # Handle missing or empty URL
     if not agenda_url or not agenda_url.strip():
-        print("[AGENDA] No agenda URL provided")
+        logger.info("No agenda URL provided")
         return []
 
-    print(f"[AGENDA] Fetching agenda from {agenda_url}")
+    logger.info(f"Fetching agenda from {agenda_url}")
 
     try:
         # Fetch the HTML page with timeout
@@ -46,33 +49,33 @@ def extract_speakers(
             from config import GEMINI_API_KEY, GEMINI_MODEL
 
             if GEMINI_API_KEY:
-                print("[AGENDA] Attempting Gemini AI extraction")
+                logger.info("Attempting Gemini AI extraction")
                 model = GEMINI_MODEL if 'GEMINI_MODEL' in dir() else "gemini-2.5-flash"
                 speakers = _extract_speakers_with_gemini(soup, GEMINI_API_KEY, model)
                 if speakers:
-                    print(f"[AGENDA] Gemini AI found {len(speakers)} speakers")
+                    logger.info(f"Gemini AI found {len(speakers)} speakers")
                     return speakers
                 else:
-                    print("[AGENDA] WARNING: Gemini AI returned no speakers")
+                    logger.warning("Gemini AI returned no speakers")
                     return []
             else:
-                print("[AGENDA] ERROR: No Gemini API key configured")
+                logger.error("No Gemini API key configured")
                 return []
         except ImportError:
-            print("[AGENDA] ERROR: Config module not available")
+            logger.error("Config module not available")
             return []
         except Exception as e:
-            print(f"[AGENDA] ERROR: Gemini extraction failed: {e}")
+            logger.error(f"Gemini extraction failed: {e}", exc_info=True)
             return []
 
     except requests.Timeout:
-        print(f"[AGENDA] ERROR: Timeout fetching agenda from {agenda_url}")
+        logger.error(f"Timeout fetching agenda from {agenda_url}")
         return []
     except requests.RequestException as e:
-        print(f"[AGENDA] ERROR: Failed to fetch agenda: {e}")
+        logger.error(f"Failed to fetch agenda: {e}", exc_info=True)
         return []
     except Exception as e:
-        print(f"[AGENDA] ERROR: Failed to parse agenda: {e}")
+        logger.error(f"Failed to parse agenda: {e}", exc_info=True)
         return []
 
 
@@ -147,10 +150,10 @@ If no members are found, return an empty array: []
             if "content" in candidate and "parts" in candidate["content"]:
                 response_text = candidate["content"]["parts"][0]["text"].strip()
             else:
-                print("[AGENDA] Unexpected Gemini response structure")
+                logger.warning("Unexpected Gemini response structure")
                 return []
         else:
-            print("[AGENDA] No candidates in Gemini response")
+            logger.warning("No candidates in Gemini response")
             return []
 
         # Remove markdown code blocks if present
@@ -171,7 +174,7 @@ If no members are found, return an empty array: []
 
         # Validate structure
         if not isinstance(speakers, list):
-            print(f"[AGENDA] Gemini returned non-list: {type(speakers)}")
+            logger.warning(f"Gemini returned non-list: {type(speakers)}")
             return []
 
         # Validate each speaker has required fields
@@ -185,12 +188,12 @@ If no members are found, return an empty array: []
         return valid_speakers
 
     except requests.exceptions.RequestException as e:
-        print(f"[AGENDA] Gemini API request error: {e}")
+        logger.error(f"Gemini API request error: {e}", exc_info=True)
         return []
     except json.JSONDecodeError as e:
-        print(f"[AGENDA] Failed to parse Gemini JSON response: {e}")
-        print(f"[AGENDA] Response was: {response_text[:500]}")
+        logger.error(f"Failed to parse Gemini JSON response: {e}")
+        logger.debug(f"Response was: {response_text[:500]}")
         return []
     except Exception as e:
-        print(f"[AGENDA] Gemini extraction error: {e}")
+        logger.error(f"Gemini extraction error: {e}", exc_info=True)
         return []

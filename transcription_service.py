@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from datetime import timedelta
 import json
 import time
+import logging
 
 
 class TranscriptionService:
@@ -30,6 +31,7 @@ class TranscriptionService:
             pyannote_api_token: pyannote.ai API token (required for diarization)
             device: Device to use for Whisper ('cpu', 'cuda', or None for auto-detect)
         """
+        self.logger = logging.getLogger(__name__)
         self.whisper_model_name = whisper_model
         self.pyannote_api_token = pyannote_api_token
         self.pyannote_api_url = "https://api.pyannote.ai/v1/diarize"
@@ -44,7 +46,6 @@ class TranscriptionService:
         else:
             self.device = device
 
-        print(f"[TRANSCRIPTION] Using device for Whisper: {self.device}")
         self._last_recording_id = None  # Track last recording ID for logging
 
         # Lazy load Whisper model (only when needed)
@@ -53,7 +54,8 @@ class TranscriptionService:
     def _load_whisper_model(self):
         """Lazy load Whisper model."""
         if self._whisper_model is None:
-            print(f"[TRANSCRIPTION] Loading Whisper model '{self.whisper_model_name}'...")
+            self.logger.info(f"Using device for Whisper: {self.device}")
+            self.logger.info(f"Loading Whisper model '{self.whisper_model_name}'...")
             # faster-whisper uses compute_type instead of device parameter
             compute_type = "int8" if self.device == "cpu" else "float16"
             self._whisper_model = WhisperModel(
@@ -91,7 +93,7 @@ class TranscriptionService:
         model = self._load_whisper_model()
 
         msg = f"Transcribing audio: {audio_path}"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
 
         if recording_id:
             import database as db
@@ -154,14 +156,14 @@ class TranscriptionService:
         # Check if WAV already exists (resume scenario)
         if os.path.exists(output_wav_path):
             msg = f"Using existing audio file: {output_wav_path}"
-            print(f"[TRANSCRIPTION] {msg}")
+            self.logger.info(msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
                 db.add_recording_log(recording_id, f'{prefix}{msg}', 'info')
             return output_wav_path
 
         msg = "Extracting audio to WAV format"
-        print(f"[TRANSCRIPTION] {msg}...")
+        self.logger.info(f"{msg}...")
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
             db.add_recording_log(recording_id, f'{prefix}{msg}', 'info')
@@ -181,9 +183,9 @@ class TranscriptionService:
         except subprocess.CalledProcessError as e:
             error_msg = f"ffmpeg failed with return code {e.returncode} when processing '{video_path}'"
             stderr_output = e.stderr if e.stderr else ""
-            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            self.logger.error(f"{error_msg}", exc_info=True)
             if stderr_output:
-                print(f"[TRANSCRIPTION] ffmpeg stderr:\n{stderr_output}")
+                self.logger.error(f"ffmpeg stderr:\n{stderr_output}")
             if recording_id:
                 db.add_transcription_log(
                     recording_id,
@@ -198,7 +200,7 @@ class TranscriptionService:
             raise
 
         msg = f"Audio extracted to {output_wav_path}"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
@@ -223,7 +225,7 @@ class TranscriptionService:
             )
 
         msg = f"Performing speaker diarization via API: {audio_path}"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
 
         if recording_id:
             import database as db
@@ -242,7 +244,7 @@ class TranscriptionService:
         media_url = f"media://{media_key}"
 
         msg = "Preparing to upload audio file to pyannote.ai"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
@@ -255,7 +257,7 @@ class TranscriptionService:
 
         if upload_response.status_code not in [200, 201]:
             error_msg = f"Failed to create upload URL: {upload_response.status_code}: {upload_response.text}"
-            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            self.logger.error(error_msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
             raise Exception(error_msg)
@@ -267,7 +269,7 @@ class TranscriptionService:
         # Get file size for progress tracking
         file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
         msg = f"Uploading audio file ({file_size_mb:.1f} MB) to pyannote.ai"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
@@ -281,19 +283,19 @@ class TranscriptionService:
 
         if upload_file_response.status_code not in [200, 204]:
             error_msg = f"Failed to upload file: {upload_file_response.status_code}: {upload_file_response.text}"
-            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            self.logger.error(error_msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
             raise Exception(error_msg)
 
         msg = "Audio file uploaded successfully"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
         # Step 3: Submit diarization job with the media URL
         msg = "Submitting diarization job to pyannote.ai"
-        print(f"[TRANSCRIPTION] {msg}")
+        self.logger.info(msg)
         if recording_id:
             db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
@@ -306,7 +308,7 @@ class TranscriptionService:
 
         if response.status_code != 200:
             error_msg = f"API request failed with status {response.status_code}: {response.text}"
-            print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+            self.logger.error(error_msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
             raise Exception(error_msg)
@@ -317,7 +319,7 @@ class TranscriptionService:
         job_id = result.get('jobId')
         if job_id:
             msg = f"Diarization job started (Job ID: {job_id}). Processing audio..."
-            print(f"[TRANSCRIPTION] {msg}")
+            self.logger.info(msg)
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
 
@@ -339,13 +341,13 @@ class TranscriptionService:
                     job_data = job_response.json()
                 except requests.RequestException as e:
                     error_msg = f"Diarization job status request failed: {e}"
-                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    self.logger.error(error_msg, exc_info=True)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
                     raise Exception(error_msg)
                 except json.JSONDecodeError as e:
                     error_msg = f"Diarization job status response was not valid JSON: {e}"
-                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    self.logger.error(error_msg, exc_info=True)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
                     raise Exception(error_msg)
@@ -355,7 +357,7 @@ class TranscriptionService:
                 # Log status changes
                 if status != last_status:
                     msg = f"Diarization job status: {status}"
-                    print(f"[TRANSCRIPTION] {msg}")
+                    self.logger.info(msg)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
                     last_status = status
@@ -365,14 +367,14 @@ class TranscriptionService:
                     break
                 elif status == 'failed':
                     error_msg = f"Diarization job failed: {job_data.get('error', 'Unknown error')}"
-                    print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                    self.logger.error(error_msg)
                     if recording_id:
                         db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
                     raise Exception(error_msg)
             else:
                 # Timeout reached
                 error_msg = f"Diarization job timed out after {max_poll_time} seconds"
-                print(f"[TRANSCRIPTION] ERROR: {error_msg}")
+                self.logger.error(error_msg)
                 if recording_id:
                     db.add_transcription_log(recording_id, f'{prefix}ERROR: {error_msg}', 'error')
                 raise Exception(error_msg)
@@ -507,8 +509,8 @@ class TranscriptionService:
         if recording_id:
             import database as db
 
-        print(f"[TRANSCRIPTION] Starting transcription with speaker diarization...")
-        print(f"[TRANSCRIPTION] Input file: {video_path}")
+        self.logger.info("Starting transcription with speaker diarization...")
+        self.logger.info(f"Input file: {video_path}")
 
         # Prepare log prefix for segment logging
         prefix = f"Segment {segment_number}: " if segment_number else ""
@@ -518,7 +520,7 @@ class TranscriptionService:
         steps = detect_transcription_progress(video_path)
         completed_steps = [name for name, data in steps.items() if data['status'] == 'completed']
         if completed_steps:
-            print(f"[TRANSCRIPTION] Resumability check - completed steps: {completed_steps}")
+            self.logger.info(f"Resumability check - completed steps: {completed_steps}")
 
         # Step 0: Extract audio to WAV format once (for both Whisper and pyannote)
         if recording_id:
@@ -535,7 +537,7 @@ class TranscriptionService:
             # Check if we can skip Whisper (whisper file exists)
             if steps.get('whisper', {}).get('status') == 'completed' and os.path.exists(whisper_path):
                 # Load existing transcription from saved file
-                print(f"[TRANSCRIPTION] Whisper already completed - loading from file")
+                self.logger.info("Whisper already completed - loading from file")
                 if recording_id:
                     db.add_transcription_log(recording_id, f'{prefix}Whisper transcription already completed - loading from file', 'info')
                 with open(whisper_path, 'r', encoding='utf-8') as f:
@@ -560,7 +562,7 @@ class TranscriptionService:
                         'full_text': transcription['text'],
                         'segments': transcription['segments']
                     }, f, indent=2, ensure_ascii=False)
-                print(f"[TRANSCRIPTION] Whisper output saved: {whisper_output_path}")
+                self.logger.info(f"Whisper output saved: {whisper_output_path}")
 
             # Step 2: Perform speaker diarization (check if already completed)
             diarization_segments = None
@@ -568,7 +570,7 @@ class TranscriptionService:
 
             if steps.get('diarization', {}).get('status') == 'completed' and os.path.exists(pyannote_path):
                 # Load existing diarization from file
-                print(f"[TRANSCRIPTION] Diarization already completed - loading from file")
+                self.logger.info("Diarization already completed - loading from file")
                 if recording_id:
                     db.add_transcription_log(recording_id, f'{prefix}Speaker diarization already completed - loading from file', 'info')
 
@@ -594,7 +596,7 @@ class TranscriptionService:
                     pyannote_path = video_path + '.diarization.pyannote.json'
                     with open(pyannote_path, 'w', encoding='utf-8') as f:
                         json.dump(pyannote_diarization, f, indent=2, ensure_ascii=False)
-                    print(f"[TRANSCRIPTION] Pyannote diarization saved: {pyannote_path}")
+                    self.logger.info(f"Pyannote diarization saved: {pyannote_path}")
 
             # Step 3: Merge transcription with diarization (before Gemini)
             if recording_id:
@@ -628,7 +630,7 @@ class TranscriptionService:
             if ENABLE_GEMINI_REFINEMENT:
                 # Check if Gemini step already completed
                 if steps.get('gemini', {}).get('status') == 'completed' and os.path.exists(gemini_path):
-                    print("[TRANSCRIPTION] Gemini refinement already completed - loading from file")
+                    self.logger.info("Gemini refinement already completed - loading from file")
                     if recording_id:
                         db.add_transcription_log(
                             recording_id,
@@ -674,7 +676,7 @@ class TranscriptionService:
                             stored_speakers = db.get_recording_speakers(recording_id)
                             if stored_speakers:
                                 expected_speakers = stored_speakers
-                                print(f"[TRANSCRIPTION] Using {len(expected_speakers)} speakers from database")
+                                self.logger.info(f"Using {len(expected_speakers)} speakers from database")
                                 db.add_transcription_log(
                                     recording_id,
                                     f'{prefix}Using {len(expected_speakers)} speakers from database',
@@ -683,7 +685,7 @@ class TranscriptionService:
 
                         # If no speakers in database, try to fetch from agenda
                         if not expected_speakers and meeting_link:
-                            print(f"[TRANSCRIPTION] Extracting speakers from agenda: {meeting_link}")
+                            self.logger.info(f"Extracting speakers from agenda: {meeting_link}")
                             if recording_id:
                                 db.add_transcription_log(
                                     recording_id,
@@ -695,7 +697,7 @@ class TranscriptionService:
                             expected_speakers = agenda_parser.extract_speakers(meeting_link)
 
                             if expected_speakers:
-                                print(f"[TRANSCRIPTION] Found {len(expected_speakers)} expected speakers from agenda")
+                                self.logger.info(f"Found {len(expected_speakers)} expected speakers from agenda")
                                 if recording_id:
                                     db.add_transcription_log(
                                         recording_id,
@@ -705,7 +707,7 @@ class TranscriptionService:
                                     # Save speaker list to database
                                     db.update_recording_speakers(recording_id, expected_speakers)
                             else:
-                                print("[TRANSCRIPTION] No speakers found in agenda, will use context only")
+                                self.logger.info("No speakers found in agenda, will use context only")
                                 if recording_id:
                                     db.add_transcription_log(
                                         recording_id,
@@ -713,7 +715,7 @@ class TranscriptionService:
                                         'warning'
                                     )
                         elif not expected_speakers:
-                            print("[TRANSCRIPTION] No meeting link available for agenda extraction")
+                            self.logger.info("No meeting link available for agenda extraction")
                             if recording_id:
                                 db.add_transcription_log(
                                     recording_id,
@@ -722,7 +724,7 @@ class TranscriptionService:
                                 )
 
                         # Call Gemini refinement with merged transcript (has text!)
-                        print("[TRANSCRIPTION] Requesting Gemini speaker refinement")
+                        self.logger.info("Requesting Gemini speaker refinement")
                         if recording_id:
                             # Log speaker list to database
                             if expected_speakers:
@@ -756,7 +758,7 @@ class TranscriptionService:
 
                         # Check if refinement actually happened (Gemini adds metadata)
                         if gemini_transcript.get('refined_by') == 'gemini':
-                            print("[TRANSCRIPTION] Gemini refinement completed successfully")
+                            self.logger.info("Gemini refinement completed successfully")
                             if recording_id:
                                 db.add_transcription_log(
                                     recording_id,
@@ -769,12 +771,12 @@ class TranscriptionService:
                                 gemini_path = video_path + '.diarization.gemini.json'
                                 with open(gemini_path, 'w', encoding='utf-8') as f:
                                     json.dump(gemini_transcript, f, indent=2, ensure_ascii=False)
-                                print(f"[TRANSCRIPTION] Gemini-refined transcript saved: {gemini_path}")
+                                self.logger.info(f"Gemini-refined transcript saved: {gemini_path}")
 
                             # Use Gemini version for final transcript
                             final_transcript = gemini_transcript
 
-                            print("[TRANSCRIPTION] Using Gemini-refined speaker labels")
+                            self.logger.info("Using Gemini-refined speaker labels")
                             if recording_id:
                                 db.add_transcription_log(
                                     recording_id,
@@ -782,7 +784,7 @@ class TranscriptionService:
                                     'info'
                                 )
                         else:
-                            print("[TRANSCRIPTION] Gemini refinement returned original (no changes)")
+                            self.logger.info("Gemini refinement returned original (no changes)")
                             if recording_id:
                                 db.add_transcription_log(
                                     recording_id,
@@ -791,14 +793,14 @@ class TranscriptionService:
                                 )
 
                     except Exception as e:
-                        print(f"[TRANSCRIPTION] Gemini refinement failed: {e}")
+                        self.logger.warning(f"Gemini refinement failed: {e}", exc_info=True)
                         if recording_id:
                             db.add_transcription_log(
                                 recording_id,
                                 f'{prefix}Gemini refinement failed: {e}',
                                 'warning'
                             )
-                        print("[TRANSCRIPTION] Using merged transcript without Gemini refinement")
+                        self.logger.info("Using merged transcript without Gemini refinement")
 
             # Update database with diarization paths if recording_id available
             if recording_id and save_to_file:
@@ -809,7 +811,7 @@ class TranscriptionService:
                 legacy_path = video_path + '.diarization.json'
                 with open(legacy_path, 'w', encoding='utf-8') as f:
                     json.dump(pyannote_diarization, f, indent=2, ensure_ascii=False)
-                print(f"[TRANSCRIPTION] Legacy diarization saved: {legacy_path}")
+                self.logger.info(f"Legacy diarization saved: {legacy_path}")
 
             # Prepare final output (use final_transcript which may be Gemini-refined)
             result = final_transcript
@@ -824,7 +826,7 @@ class TranscriptionService:
 
                 self.save_transcript(result, output_path)
 
-            print(f"[TRANSCRIPTION] Detected {result['num_speakers']} unique speakers")
+            self.logger.info(f"Detected {result['num_speakers']} unique speakers")
 
             if recording_id:
                 db.add_transcription_log(recording_id, f'{prefix}Transcription complete - detected {result["num_speakers"]} speakers', 'info')
@@ -837,9 +839,9 @@ class TranscriptionService:
             if os.path.exists(audio_wav_path):
                 try:
                     os.remove(audio_wav_path)
-                    print(f"[TRANSCRIPTION] Cleaned up audio file: {audio_wav_path}")
+                    self.logger.info(f"Cleaned up audio file: {audio_wav_path}")
                 except OSError as e:
-                    print(f"[TRANSCRIPTION] Warning: Could not remove audio file: {e}")
+                    self.logger.warning(f"Could not remove audio file: {e}")
 
     def save_transcript(self, transcript: Dict, output_path: str):
         """
@@ -852,7 +854,7 @@ class TranscriptionService:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(transcript, f, indent=2, ensure_ascii=False)
 
-        print(f"[TRANSCRIPTION] Transcript saved to: {output_path}")
+        self.logger.info(f"Transcript saved to: {output_path}")
 
     def format_transcript_as_text(self, segments: List[Dict]) -> str:
         """

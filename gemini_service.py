@@ -5,8 +5,11 @@ Uses Google Gemini API to refine speaker diarization with meeting context.
 """
 
 import json
+import logging
 from typing import Dict, List, Optional
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def refine_diarization(
@@ -34,12 +37,12 @@ def refine_diarization(
     """
     # Handle missing API key
     if not api_key:
-        print("[GEMINI] ERROR: No API key provided, returning original transcript")
+        logger.error("No API key provided, returning original transcript")
         return merged_transcript
 
     # Handle empty speakers list (still attempt refinement with context)
     if not expected_speakers:
-        print("[GEMINI] WARNING: No expected speakers provided, will use context only")
+        logger.warning("No expected speakers provided, will use context only")
 
     # Get segment count for early size check
     segments = merged_transcript.get('segments', [])
@@ -48,15 +51,15 @@ def refine_diarization(
 
     # Skip refinement for very large meetings (>1000 segments) before attempting API call
     if num_segments > 1000:
-        print(f"[GEMINI] Skipping refinement for meeting with {num_segments} segments (too large)")
+        logger.info(f"Skipping refinement for meeting with {num_segments} segments (too large)")
         return merged_transcript
 
-    print(f"[GEMINI] ========================================")
-    print(f"[GEMINI] STARTING SPEAKER REFINEMENT")
-    print(f"[GEMINI] Model: {model}")
-    print(f"[GEMINI] Segments: {num_segments}")
-    print(f"[GEMINI] Expected speakers: {num_speakers}")
-    print(f"[GEMINI] ========================================")
+    logger.info("========================================")
+    logger.info("STARTING SPEAKER REFINEMENT")
+    logger.info(f"Model: {model}")
+    logger.info(f"Segments: {num_segments}")
+    logger.info(f"Expected speakers: {num_speakers}")
+    logger.info("========================================")
 
     # Check prompt size for warning about large meetings
     # Estimate token count (rough: 1 token ≈ 4 characters)
@@ -64,9 +67,9 @@ def refine_diarization(
     MAX_REASONABLE_TOKENS = 30000  # Leave headroom for Gemini's context limit (usually 32k-128k)
 
     if prompt_estimate > MAX_REASONABLE_TOKENS:
-        print(f"[GEMINI] WARNING: Transcript is very large (~{int(prompt_estimate)} tokens)")
-        print(f"[GEMINI] Large meetings may hit API limits or incur high costs")
-        print(f"[GEMINI] Consider chunking strategy for meetings with >{num_segments} segments")
+        logger.warning(f"Transcript is very large (~{int(prompt_estimate)} tokens)")
+        logger.warning("Large meetings may hit API limits or incur high costs")
+        logger.warning(f"Consider chunking strategy for meetings with >{num_segments} segments")
 
     import time
     start_time = time.time()
@@ -79,24 +82,24 @@ def refine_diarization(
         client = client_lib.Client(api_key=api_key)
 
         # Log the speaker list for debugging
-        print(f"[GEMINI] Speaker list being used:")
-        print("=" * 80)
+        logger.info("Speaker list being used:")
+        logger.info("=" * 80)
         formatted_speakers = []
         for speaker in expected_speakers:
             last_name = speaker['name'].split()[-1] if speaker.get('name') else 'Unknown'
             role = speaker.get('role', 'Unknown')
             formatted_speakers.append(f"{role} {last_name}")
-        print(', '.join(formatted_speakers))
-        print("=" * 80)
+        logger.info(', '.join(formatted_speakers))
+        logger.info("=" * 80)
 
         # Construct the prompt
         prompt = _construct_prompt(merged_transcript, expected_speakers, meeting_title)
 
         # Log the prompt for debugging
-        print(f"[GEMINI] Prompt being sent to API:")
-        print("=" * 80)
-        print(prompt)
-        print("=" * 80)
+        logger.debug("Prompt being sent to API:")
+        logger.debug("=" * 80)
+        logger.debug(prompt)
+        logger.debug("=" * 80)
 
         # Call the API with config
         # Note: timeout is not supported in config for google-genai SDK
@@ -115,7 +118,7 @@ def refine_diarization(
             response_text = response.text
         except AttributeError:
             # If .text doesn't exist, try accessing candidates
-            print("[GEMINI] WARNING: response.text not available, checking candidates")
+            logger.warning("response.text not available, checking candidates")
             if hasattr(response, 'candidates') and response.candidates:
                 candidate = response.candidates[0]
                 if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
@@ -123,24 +126,24 @@ def refine_diarization(
                         response_text = candidate.content.parts[0].text
 
         if not response_text:
-            print("[GEMINI] ERROR: Could not extract text from response")
-            print(f"[GEMINI] Response type: {type(response)}")
-            print(f"[GEMINI] Response dir: {dir(response)}")
+            logger.error("Could not extract text from response")
+            logger.error(f"Response type: {type(response)}")
+            logger.error(f"Response dir: {dir(response)}")
             return merged_transcript
 
         # Log the raw response for debugging
-        print(f"[GEMINI] Raw response from API:")
-        print("=" * 80)
-        print(response_text[:2000])  # First 2000 chars to avoid too much output
+        logger.debug("Raw response from API:")
+        logger.debug("=" * 80)
+        logger.debug(response_text[:2000])  # First 2000 chars to avoid too much output
         if len(response_text) > 2000:
-            print(f"... (truncated, total length: {len(response_text)} chars)")
-        print("=" * 80)
+            logger.debug(f"... (truncated, total length: {len(response_text)} chars)")
+        logger.debug("=" * 80)
 
         # Extract JSON from response
         refined_json = _extract_json_from_response(response_text)
 
         if refined_json is None:
-            print("[GEMINI] WARNING: Could not parse valid JSON from response, using original")
+            logger.warning("Could not parse valid JSON from response, using original")
             return merged_transcript
 
         # Add metadata about refinement
@@ -157,32 +160,32 @@ def refine_diarization(
 
         elapsed_time = time.time() - start_time
 
-        print(f"[GEMINI] ========================================")
-        print(f"[GEMINI] REFINEMENT COMPLETED")
-        print(f"[GEMINI] Time taken: {elapsed_time:.1f} seconds")
-        print(f"[GEMINI] Original speakers: {sorted(original_labels)}")
-        print(f"[GEMINI] Refined speakers: {sorted(refined_labels)}")
-        print(f"[GEMINI] Summary: {refined_count} named, {generic_count} still generic")
-        print(f"[GEMINI] ========================================")
+        logger.info("========================================")
+        logger.info("REFINEMENT COMPLETED")
+        logger.info(f"Time taken: {elapsed_time:.1f} seconds")
+        logger.info(f"Original speakers: {sorted(original_labels)}")
+        logger.info(f"Refined speakers: {sorted(refined_labels)}")
+        logger.info(f"Summary: {refined_count} named, {generic_count} still generic")
+        logger.info("========================================")
 
         return refined_json
 
     except ImportError as e:
         elapsed_time = time.time() - start_time
-        print(f"[GEMINI] ========================================")
-        print(f"[GEMINI] REFINEMENT FAILED - google-genai not installed")
-        print(f"[GEMINI] Time taken: {elapsed_time:.1f} seconds")
-        print(f"[GEMINI] Returning original transcript")
-        print(f"[GEMINI] ========================================")
+        logger.error("========================================")
+        logger.error("REFINEMENT FAILED - google-genai not installed")
+        logger.error(f"Time taken: {elapsed_time:.1f} seconds")
+        logger.error("Returning original transcript")
+        logger.error("========================================")
         return merged_transcript
     except Exception as e:
         elapsed_time = time.time() - start_time
-        print(f"[GEMINI] ========================================")
-        print(f"[GEMINI] REFINEMENT FAILED - API error")
-        print(f"[GEMINI] Error: {e}")
-        print(f"[GEMINI] Time taken: {elapsed_time:.1f} seconds")
-        print(f"[GEMINI] Returning original transcript")
-        print(f"[GEMINI] ========================================")
+        logger.error("========================================")
+        logger.error("REFINEMENT FAILED - API error")
+        logger.error(f"Error: {e}", exc_info=True)
+        logger.error(f"Time taken: {elapsed_time:.1f} seconds")
+        logger.error("Returning original transcript")
+        logger.error("========================================")
         return merged_transcript
 
 
