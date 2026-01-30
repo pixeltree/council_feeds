@@ -9,11 +9,11 @@ Example:
     from database import create_recording, get_upcoming_meetings
 """
 
-# Import and re-export config constants for backward compatibility
-from config import CALGARY_TZ, DB_DIR, DB_PATH
-
-# Import connection utilities
+# Import connection utilities (which include config constants)
 from database.connection import (
+    CALGARY_TZ,
+    DB_DIR,
+    DB_PATH,
     Database,
     ensure_db_directory,
     get_db_connection,

@@ -7,10 +7,15 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Generator
 
-from config import CALGARY_TZ, DB_DIR, DB_PATH
+import config
 from exceptions import DatabaseConnectionError, DatabaseQueryError
 
 logger = logging.getLogger(__name__)
+
+# Module-level references that can be overridden for testing
+CALGARY_TZ = config.CALGARY_TZ
+DB_DIR = config.DB_DIR
+DB_PATH = config.DB_PATH
 
 
 def parse_datetime_from_db(dt_str: str) -> datetime:
@@ -78,7 +83,9 @@ class Database:
 
 def ensure_db_directory():
     """Ensure the database directory exists."""
-    os.makedirs(DB_DIR, exist_ok=True)
+    # Import here to get the potentially-monkeypatched value
+    import database
+    os.makedirs(database.DB_DIR, exist_ok=True)
 
 
 @contextmanager
@@ -92,12 +99,14 @@ def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
         DatabaseConnectionError: If connection fails
         DatabaseQueryError: If query execution fails
     """
+    # Import here to get the potentially-monkeypatched value
+    import database
     ensure_db_directory()
     try:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(database.DB_PATH)
         conn.row_factory = sqlite3.Row  # Enable column access by name
     except sqlite3.Error as e:
-        raise DatabaseConnectionError(DB_PATH, str(e))
+        raise DatabaseConnectionError(database.DB_PATH, str(e))
 
     try:
         yield conn
