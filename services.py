@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 import database as db
 from exceptions import RecordingStorageError
+from resource_managers import recording_process
 from config import (
     CALGARY_TZ,
     COUNCIL_CALENDAR_API,
@@ -508,40 +509,6 @@ class RecordingService:
             self.logger.error(f"[STATIC CHECK] Audio detection failed: {e}", exc_info=True)
             return None, None
 
-    def _stop_ffmpeg_gracefully(self, process: subprocess.Popen) -> None:
-        """Stop ffmpeg process gracefully, allowing it to close files properly.
-
-        Args:
-            process: The ffmpeg process to stop
-        """
-        import signal
-        import time
-
-        self.logger.info("Sending interrupt signal to ffmpeg to close file properly...")
-
-        # Send SIGINT (Ctrl+C) to ffmpeg for clean shutdown
-        try:
-            process.send_signal(signal.SIGINT)
-        except OSError:
-            process.terminate()
-
-        # Wait up to 10 seconds for ffmpeg to finish writing
-        self.logger.info("Waiting for ffmpeg to finish writing file...")
-        for i in range(10):
-            time.sleep(1)
-            if process.poll() is not None:
-                self.logger.info(f"Recording stopped cleanly after {i+1} seconds")
-                return
-
-        # If still running, force kill
-        if process.poll() is None:
-            self.logger.warning("ffmpeg did not stop gracefully, forcing kill...")
-            process.kill()
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                self.logger.error("Process did not terminate after kill signal")
-                pass
 
     def _validate_recording_content(self, output_file: str, recording_id: int, end_time: datetime) -> bool:
         """Validate that recording has audio content and remove if empty.
@@ -694,74 +661,68 @@ class RecordingService:
         cmd = self._build_ffmpeg_command(stream_url, output_file, output_pattern, format_ext)
 
         try:
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            self.current_process = process
+            with recording_process(cmd, timeout=10) as process:
+                self.current_process = process
 
-            self.logger.info(f"Recording started (PID: {process.pid})")
+                self.logger.info(f"Recording started (PID: {process.pid})")
 
-            # Monitor the process
-            import time
-            import glob
-            static_checks = 0
+                # Monitor the process
+                import time
+                import glob
+                static_checks = 0
 
-            while True:
-                # Check if stream is still live
-                time.sleep(STATIC_CHECK_INTERVAL)
+                while True:
+                    # Check if stream is still live
+                    time.sleep(STATIC_CHECK_INTERVAL)
 
-                # Check for static content using ffmpeg scene detection
-                if ENABLE_STATIC_DETECTION:
-                    # Get the most recent file to analyze
-                    file_to_check = None
-                    if ENABLE_SEGMENTED_RECORDING and output_pattern:
-                        base_pattern = output_pattern.replace('%03d', '*')
-                        segment_files = sorted(glob.glob(base_pattern))
-                        if segment_files:
-                            file_to_check = segment_files[-1]  # Most recent segment
-                    elif os.path.exists(output_file):
-                        file_to_check = output_file
+                    # Check for static content using ffmpeg scene detection
+                    if ENABLE_STATIC_DETECTION:
+                        # Get the most recent file to analyze
+                        file_to_check = None
+                        if ENABLE_SEGMENTED_RECORDING and output_pattern:
+                            base_pattern = output_pattern.replace('%03d', '*')
+                            segment_files = sorted(glob.glob(base_pattern))
+                            if segment_files:
+                                file_to_check = segment_files[-1]  # Most recent segment
+                        elif os.path.exists(output_file):
+                            file_to_check = output_file
 
-                    if file_to_check and os.path.exists(file_to_check):
-                        mean_volume, max_volume = self._check_audio_levels(file_to_check)
+                        if file_to_check and os.path.exists(file_to_check):
+                            mean_volume, max_volume = self._check_audio_levels(file_to_check)
 
-                        self.logger.debug(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                            self.logger.debug(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
 
-                        # If audio is very quiet, likely static placeholder
-                        if mean_volume is not None and max_volume is not None:
-                            if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
-                                static_checks += 1
-                                self.logger.warning(f"Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
+                            # If audio is very quiet, likely static placeholder
+                            if mean_volume is not None and max_volume is not None:
+                                if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
+                                    static_checks += 1
+                                    self.logger.warning(f"Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
 
-                                if static_checks >= STATIC_MAX_FAILURES:
-                                    self.logger.warning("Stream appears to be static (no audio/placeholder). Stopping recording...")
-                                    db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
-                                    self.stop_requested = True
+                                    if static_checks >= STATIC_MAX_FAILURES:
+                                        self.logger.warning("Stream appears to be static (no audio/placeholder). Stopping recording...")
+                                        db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
+                                        self.stop_requested = True
+                                else:
+                                    if static_checks > 0:
+                                        self.logger.info("[STATIC CHECK] Audio detected, resetting counter")
+                                    static_checks = 0  # Reset counter if audio detected
                             else:
-                                if static_checks > 0:
-                                    self.logger.info("[STATIC CHECK] Audio detected, resetting counter")
-                                static_checks = 0  # Reset counter if audio detected
-                        else:
-                            self.logger.warning("[STATIC CHECK] Could not parse audio levels")
+                                self.logger.warning("[STATIC CHECK] Could not parse audio levels")
 
-                # Check if stop was requested
-                if self.stop_requested:
-                    self.logger.info("Stop requested by user. Stopping recording...")
-                    db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
-                    self._stop_ffmpeg_gracefully(process)
-                    break
+                    # Check if stop was requested
+                    if self.stop_requested:
+                        self.logger.info("Stop requested by user. Stopping recording...")
+                        db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
+                        break
 
-                if not self.stream_service.is_stream_live(stream_url):
-                    self.logger.info("Stream is no longer live. Stopping recording...")
-                    db.log_stream_status(stream_url, 'offline', meeting_id, 'Stream ended')
-                    self._stop_ffmpeg_gracefully(process)
-                    break
+                    if not self.stream_service.is_stream_live(stream_url):
+                        self.logger.info("Stream is no longer live. Stopping recording...")
+                        db.log_stream_status(stream_url, 'offline', meeting_id, 'Stream ended')
+                        break
 
-                # Check if process is still running
-                if process.poll() is not None:
-                    self.logger.info("Recording process ended")
+                    # Check if process is still running
+                    if process.poll() is not None:
+                        self.logger.info("Recording process ended")
                     break
 
             end_time = datetime.now(self.timezone)

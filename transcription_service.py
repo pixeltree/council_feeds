@@ -13,6 +13,7 @@ import json
 import time
 import logging
 from exceptions import WhisperError, DiarizationError
+from resource_managers import managed_file
 
 
 class TranscriptionService:
