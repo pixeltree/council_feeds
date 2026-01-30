@@ -24,19 +24,21 @@ def main():
         print(f"  Status: {rec['status']}, Size: {rec['file_size_bytes'] or 'NULL'}")
         print(f"  File exists: {rec['file_exists']}, Actual size: {rec['actual_file_size']}")
 
-    print(f"\n{'='*60}")
-    print("DRY RUN - No changes will be made")
-    print(f"{'='*60}\n")
-
-    # Show what would be deleted
-    for rec in recordings:
-        print(f"[DRY RUN] Would delete recording {rec['id']}")
-
     if dry_run_only:
+        print(f"\n{'='*60}")
+        print("DRY RUN - No changes will be made")
+        print(f"{'='*60}\n")
+
+        # Show what would be deleted
+        for rec in recordings:
+            print(f"[DRY RUN] Would delete recording {rec['id']}")
+
         print("\nDry run complete. Use --yes to actually delete.")
         return
 
     print(f"\n{'='*60}")
+    print("The following recordings will be deleted:")
+    print(f"{'='*60}")
 
     if auto_confirm:
         print("Auto-confirming deletion (--yes flag)")

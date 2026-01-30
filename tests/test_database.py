@@ -487,8 +487,8 @@ class TestStaleRecordings:
 
         db.init_database()
 
-        # Create recording with non-existent file
-        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        # Create recording with non-existent file (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
         recording_id = db.create_recording(
             None,
             '/nonexistent/file.mp4',
@@ -517,8 +517,8 @@ class TestStaleRecordings:
         temp_file = tmp_path / "recording.mp4"
         temp_file.write_bytes(b'test content')
 
-        # Create recording that's stuck in recording state
-        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        # Create recording that's stuck in recording state (>2 hours ago)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(hours=3)
         recording_id = db.create_recording(
             None,
             str(temp_file),
@@ -545,8 +545,8 @@ class TestStaleRecordings:
         temp_file = tmp_path / "tiny.mp4"
         temp_file.write_text('tiny')
 
-        # Create recording
-        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        # Create recording (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
         recording_id = db.create_recording(
             None,
             str(temp_file),
@@ -575,8 +575,8 @@ class TestStaleRecordings:
         temp_file = tmp_path / "valid.mp4"
         temp_file.write_bytes(b'0' * 10000)  # 10KB file
 
-        # Create recording
-        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        # Create recording (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
         recording_id = db.create_recording(
             None,
             str(temp_file),
@@ -603,8 +603,8 @@ class TestStaleRecordings:
         temp_file = tmp_path / "empty.mp4"
         temp_file.write_bytes(b'test')
 
-        # Create recording
-        start_time = CALGARY_TZ.localize(datetime(2026, 1, 27, 9, 30))
+        # Create recording (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
         recording_id = db.create_recording(
             None,
             str(temp_file),
