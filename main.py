@@ -27,6 +27,13 @@ from config import (
     OUTPUT_DIR,
     MEETING_BUFFER_BEFORE,
     MEETING_BUFFER_AFTER,
+    ENABLE_TRANSCRIPTION,
+    ENABLE_POST_PROCESSING,
+    WHISPER_MODEL,
+    PYANNOTE_API_TOKEN,
+    POST_PROCESS_SILENCE_THRESHOLD_DB,
+    POST_PROCESS_MIN_SILENCE_DURATION,
+    FFMPEG_COMMAND,
     validate_config
 )
 from services import (
@@ -36,11 +43,35 @@ from services import (
     RecordingService
 )
 
-# Initialize services
+# Initialize services with dependency injection
 calendar_service = CalendarService()
 meeting_scheduler = MeetingScheduler()
 stream_service = StreamService()
-recording_service = RecordingService(stream_service=stream_service)
+
+# Create optional services based on configuration
+transcription_service = None
+if ENABLE_TRANSCRIPTION:
+    from transcription_service import TranscriptionService
+    transcription_service = TranscriptionService(
+        whisper_model=WHISPER_MODEL,
+        pyannote_api_token=PYANNOTE_API_TOKEN
+    )
+
+post_processor = None
+if ENABLE_POST_PROCESSING:
+    from post_processor import PostProcessor
+    post_processor = PostProcessor(
+        silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
+        min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
+        ffmpeg_command=FFMPEG_COMMAND
+    )
+
+# Initialize recording service with all dependencies
+recording_service = RecordingService(
+    stream_service=stream_service,
+    transcription_service=transcription_service,
+    post_processor=post_processor
+)
 
 def daily_calendar_refresh():
     """Scheduled task: Refresh calendar at midnight."""
@@ -102,6 +133,7 @@ def main():
 
     # Set recording service in web server so it can stop recordings
     web_server.set_recording_service(recording_service)
+    web_server.set_post_processor(post_processor)
 
     # Start web server in background thread
     web_thread = threading.Thread(target=web_server.run_server, daemon=True)

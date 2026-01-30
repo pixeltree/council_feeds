@@ -23,13 +23,19 @@ from exceptions import (
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
-# Global reference to recording service (set by main.py)
+# Global references to services (set by main.py)
 recording_service = None
+post_processor_service = None
 
 def set_recording_service(service):
     """Set the recording service instance for the web server to use."""
     global recording_service
     recording_service = service
+
+def set_post_processor(processor):
+    """Set the post processor instance for the web server to use."""
+    global post_processor_service
+    post_processor_service = processor
 
 
 def get_current_recording():
@@ -354,7 +360,12 @@ def process_recording(recording_id):
 
     # Run post-processing in background thread
     def run_processing():
-        processor = PostProcessor()
+        # Use injected post processor or create a default one
+        global post_processor_service
+        if post_processor_service is not None:
+            processor = post_processor_service
+        else:
+            processor = PostProcessor()
         result = processor.process_recording(recording['file_path'], recording_id)
         logger.info(f"Post-processing result for recording {recording_id}: {result}")
 
