@@ -11,7 +11,6 @@ import sqlite3
 import logging
 from contextlib import contextmanager
 from typing import Iterator, List
-from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
@@ -45,8 +44,8 @@ def recording_process(cmd: List[str], timeout: int = 10) -> Iterator[subprocess.
         logger.debug(f"Starting process: {' '.join(cmd[:3])}...")
         process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             stdin=subprocess.PIPE
         )
         yield process

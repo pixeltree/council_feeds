@@ -4,14 +4,12 @@ Tests for resource cleanup context managers.
 """
 
 import os
-import signal
 import sqlite3
 import subprocess
 import tempfile
 import time
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
 from resource_managers import (
     recording_process,

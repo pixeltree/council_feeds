@@ -723,7 +723,7 @@ class RecordingService:
                     # Check if process is still running
                     if process.poll() is not None:
                         self.logger.info("Recording process ended")
-                    break
+                        break
 
             end_time = datetime.now(self.timezone)
 
