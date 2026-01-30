@@ -97,3 +97,11 @@ class SegmentMerger:
         except Exception as e:
             self.logger.error(f"Error merging segments: {e}", exc_info=True)
             raise RecordingStorageError(output_file, 'merge', str(e))
+        finally:
+            # Clean up concat file on both success and failure
+            try:
+                if os.path.exists(concat_file):
+                    os.remove(concat_file)
+            except OSError:
+                # Best-effort cleanup; ignore if file cannot be removed
+                pass

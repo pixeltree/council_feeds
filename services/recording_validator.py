@@ -57,11 +57,13 @@ class RecordingValidator:
                     try:
                         mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
                     except (ValueError, IndexError):
+                        # If parsing fails, leave mean_volume as None and continue scanning
                         pass
                 if 'max_volume:' in line:
                     try:
                         max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
                     except (ValueError, IndexError):
+                        # If parsing fails, leave max_volume as None and continue scanning
                         pass
 
             return mean_volume, max_volume

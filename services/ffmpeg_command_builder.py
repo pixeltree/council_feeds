@@ -63,10 +63,24 @@ class FFmpegCommandBuilder:
             # Segmented recording for resilience
             if not output_pattern:
                 raise ValueError("output_pattern is required when ENABLE_SEGMENTED_RECORDING is True")
+
+            # Map file extension to the correct segment muxer
+            if format_ext == 'mkv':
+                segment_muxer = 'matroska'
+            elif format_ext == 'mp4':
+                segment_muxer = 'mp4'
+            elif format_ext == 'ts':
+                segment_muxer = 'mpegts'
+            else:
+                raise ValueError(
+                    f"Segmented recording does not support format_ext '{format_ext}'. "
+                    "Supported values are: 'mkv', 'mp4', 'ts'."
+                )
+
             cmd.extend([
                 '-f', 'segment',
                 '-segment_time', str(SEGMENT_DURATION),
-                '-segment_format', format_ext if format_ext == 'mkv' else 'matroska',
+                '-segment_format', segment_muxer,
                 '-reset_timestamps', '1',
                 '-strftime', '1',  # Allow time formatting in segment names
                 output_pattern

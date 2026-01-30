@@ -10,7 +10,6 @@ from config import (
     OUTPUT_DIR,
     RECORDING_FORMAT,
     ENABLE_SEGMENTED_RECORDING,
-    SEGMENT_DURATION,
 )
 
 

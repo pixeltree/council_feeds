@@ -27,14 +27,17 @@ class RecordingMonitor:
         self.validator = validator
         self.logger = logging.getLogger(__name__)
         self.stop_requested = False
+        self.stop_reason = None  # Track reason for stopping ('user' or 'static')
 
     def request_stop(self) -> None:
         """Request monitoring to stop."""
         self.stop_requested = True
+        self.stop_reason = 'user'
 
     def reset_stop(self) -> None:
         """Reset stop request flag."""
         self.stop_requested = False
+        self.stop_reason = None
 
     def monitor_recording(
         self,
@@ -80,6 +83,7 @@ class RecordingMonitor:
                                 self.logger.warning("Stream appears to be static (no audio/placeholder). Stopping recording...")
                                 db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
                                 self.stop_requested = True
+                                self.stop_reason = 'static'
                         else:
                             if static_checks > 0:
                                 self.logger.info("[STATIC CHECK] Audio detected, resetting counter")
@@ -89,8 +93,12 @@ class RecordingMonitor:
 
             # Check if stop was requested
             if self.stop_requested:
-                self.logger.info("Stop requested. Stopping recording...")
-                db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
+                if self.stop_reason == 'static':
+                    self.logger.info("Stop requested (static content detected). Stopping recording...")
+                    # Status already logged when static was detected
+                else:
+                    self.logger.info("Stop requested by user. Stopping recording...")
+                    db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
                 break
 
             if not self.stream_service.is_stream_live(stream_url):

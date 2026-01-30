@@ -251,7 +251,11 @@ class RecordingService:
                     output_file = merged_file
                     self.logger.info(f"Recording saved: {output_file}")
                 else:
-                    self.logger.warning("Could not merge segments, keeping individual segments")
+                    error_msg = "Could not merge segments; marking recording as failed"
+                    self.logger.error(error_msg)
+                    db.update_recording(recording_id, end_time, 'failed', error_msg)
+                    db.log_stream_status(stream_url, 'error', meeting_id, error_msg)
+                    return False
             else:
                 self.logger.info(f"Recording saved: {output_file}")
 
