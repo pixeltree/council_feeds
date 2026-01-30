@@ -6,12 +6,12 @@ These tests follow TDD (Test-Driven Development) principles:
 - Cover happy path, edge cases, and error conditions
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
-import web_server
-from web_server import app
 from datetime import datetime
-import threading
+from unittest.mock import Mock, patch
+
+import pytest
+
+from web_server import app
 
 
 @pytest.fixture
