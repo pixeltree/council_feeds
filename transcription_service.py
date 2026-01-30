@@ -317,27 +317,25 @@ class TranscriptionService:
                 if 'whisper' in futures:
                     transcription = futures['whisper'].result()
 
+                    # Save Whisper output immediately for resumability
+                    whisper_output_path = video_path + '.whisper.json'
+                    with open(whisper_output_path, 'w', encoding='utf-8') as f:
+                        json.dump({
+                            'language': transcription.get('language', 'en'),
+                            'full_text': transcription['text'],
+                            'segments': transcription['segments']
+                        }, f, indent=2, ensure_ascii=False)
+                    self.logger.info(f"Whisper output saved: {whisper_output_path}")
+
                 if 'diarization' in futures:
                     diarization_segments = futures['diarization'].result()
 
-        # Save intermediate results to disk for resumability
-        # This is done outside the executor block to ensure consistent save patterns
-        if transcription and not whisper_already_done and save_to_file:
-            whisper_output_path = video_path + '.whisper.json'
-            with open(whisper_output_path, 'w', encoding='utf-8') as f:
-                json.dump({
-                    'language': transcription.get('language', 'en'),
-                    'full_text': transcription['text'],
-                    'segments': transcription['segments']
-                }, f, indent=2, ensure_ascii=False)
-            self.logger.info(f"Whisper output saved: {whisper_output_path}")
-
         # Create pyannote diarization JSON structure (only if not loaded from file)
-        if pyannote_diarization is None and diarization_segments:
+        if pyannote_diarization is None and diarization_segments is not None:
             pyannote_diarization = {
                 'file': video_path,
                 'segments': diarization_segments,
-                'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
+                'num_speakers': len(set(seg['speaker'] for seg in diarization_segments)) if diarization_segments else 0
             }
 
         # Save pyannote diarization data (original output from pyannote API)
