@@ -102,6 +102,12 @@ def process_unprocessed_recordings(limit: int = 50):
 
 
 if __name__ == '__main__':
+    # Configure logging for standalone execution
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
     # Parse command line arguments
     limit = 50
     if len(sys.argv) > 1:
