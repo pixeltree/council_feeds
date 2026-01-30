@@ -22,28 +22,39 @@ def client():
         yield client
 
 
+def get_mock_meeting_info(title='Public Hearing Meeting of Council', dt=None):
+    """Helper to create mock meeting info matching actual VodService output."""
+    if dt is None:
+        dt = datetime(2024, 4, 22, 11, 8)
+    return {
+        'title': title,
+        'datetime': dt,
+        'timestamp': int(dt.timestamp()),  # Unix timestamp as integer
+        'meeting_id': 'test123',
+        'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123',
+        'raw_date': dt.strftime('%Y-%m-%d %H:%M:%S')  # Required by save_meetings
+    }
+
+
 @pytest.mark.unit
 class TestVodImportAPI:
     """Test VOD import API endpoint."""
 
     @patch('web_server.threading.Thread')
     @patch('web_server.db.create_recording')
+    @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_success(self, mock_vod_service_class, mock_save_meetings,
-                                mock_create_recording, mock_thread, client):
+                                mock_find_meeting, mock_create_recording, mock_thread, client):
         """Test successful VOD import request."""
         # Setup mocks
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
         mock_vod_service.validate_escriba_url.return_value = True
-        mock_vod_service.extract_meeting_info.return_value = {
-            'title': 'Public Hearing Meeting of Council',
-            'datetime': datetime(2024, 4, 22, 11, 8),
-            'timestamp': '2024-04-22_11-08',
-            'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
-        }
-        mock_save_meetings.return_value = 42  # meeting_id
+        mock_vod_service.extract_meeting_info.return_value = get_mock_meeting_info()
+        mock_save_meetings.return_value = 1  # Returns count
+        mock_find_meeting.return_value = {'id': 42, 'title': 'Public Hearing Meeting of Council'}
         mock_create_recording.return_value = 100  # recording_id
 
         # Make request
@@ -114,21 +125,18 @@ class TestVodImportAPI:
 
     @patch('web_server.threading.Thread')
     @patch('web_server.db.create_recording')
+    @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_with_title_override(self, mock_vod_service_class, mock_save_meetings,
-                                            mock_create_recording, mock_thread, client):
+                                            mock_find_meeting, mock_create_recording, mock_thread, client):
         """Test import with custom title override."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
         mock_vod_service.validate_escriba_url.return_value = True
-        mock_vod_service.extract_meeting_info.return_value = {
-            'title': 'Original Title',
-            'datetime': datetime(2024, 4, 22, 11, 8),
-            'timestamp': '2024-04-22_11-08',
-            'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
-        }
-        mock_save_meetings.return_value = 42
+        mock_vod_service.extract_meeting_info.return_value = get_mock_meeting_info(title='Original Title')
+        mock_save_meetings.return_value = 1
+        mock_find_meeting.return_value = {'id': 42, 'title': 'Custom Meeting Title'}
         mock_create_recording.return_value = 100
 
         response = client.post('/api/recordings/import-vod', json={
@@ -147,21 +155,18 @@ class TestVodImportAPI:
 
     @patch('web_server.threading.Thread')
     @patch('web_server.db.create_recording')
+    @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_with_date_override(self, mock_vod_service_class, mock_save_meetings,
-                                           mock_create_recording, mock_thread, client):
+                                           mock_find_meeting, mock_create_recording, mock_thread, client):
         """Test import with custom date override."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
         mock_vod_service.validate_escriba_url.return_value = True
-        mock_vod_service.extract_meeting_info.return_value = {
-            'title': 'Meeting Title',
-            'datetime': datetime(2024, 4, 22, 11, 8),
-            'timestamp': '2024-04-22_11-08',
-            'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
-        }
-        mock_save_meetings.return_value = 42
+        mock_vod_service.extract_meeting_info.return_value = get_mock_meeting_info()
+        mock_save_meetings.return_value = 1
+        mock_find_meeting.return_value = {'id': 42, 'title': 'Meeting Title'}
         mock_create_recording.return_value = 100
 
         response = client.post('/api/recordings/import-vod', json={
@@ -201,20 +206,16 @@ class TestVodImportAPI:
 
     @patch('web_server.threading.Thread')
     @patch('web_server.db.create_recording')
+    @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_database_error(self, mock_vod_service_class, mock_save_meetings,
-                                       mock_create_recording, mock_thread, client):
+                                       mock_find_meeting, mock_create_recording, mock_thread, client):
         """Test import when database operation fails."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
         mock_vod_service.validate_escriba_url.return_value = True
-        mock_vod_service.extract_meeting_info.return_value = {
-            'title': 'Meeting Title',
-            'datetime': datetime(2024, 4, 22, 11, 8),
-            'timestamp': '2024-04-22_11-08',
-            'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
-        }
+        mock_vod_service.extract_meeting_info.return_value = get_mock_meeting_info()
         mock_save_meetings.side_effect = Exception("Database error")
 
         response = client.post('/api/recordings/import-vod', json={
@@ -229,23 +230,20 @@ class TestVodImportAPI:
     @patch('web_server.threading.Thread')
     @patch('web_server.db.update_recording')
     @patch('web_server.db.create_recording')
+    @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_download_thread_success(self, mock_vod_service_class, mock_save_meetings,
-                                     mock_create_recording, mock_update_recording,
+                                     mock_find_meeting, mock_create_recording, mock_update_recording,
                                      mock_thread, client):
         """Test that download thread is properly configured."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
         mock_vod_service.validate_escriba_url.return_value = True
-        mock_vod_service.extract_meeting_info.return_value = {
-            'title': 'Meeting Title',
-            'datetime': datetime(2024, 4, 22, 11, 8),
-            'timestamp': '2024-04-22_11-08',
-            'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
-        }
+        mock_vod_service.extract_meeting_info.return_value = get_mock_meeting_info()
         mock_vod_service.download_vod.return_value = '/path/to/recording.mkv'
-        mock_save_meetings.return_value = 42
+        mock_save_meetings.return_value = 1
+        mock_find_meeting.return_value = {'id': 42, 'title': 'Meeting Title'}
         mock_create_recording.return_value = 100
 
         response = client.post('/api/recordings/import-vod', json={
@@ -275,22 +273,19 @@ class TestVodImportAPI:
 
     @patch('web_server.threading.Thread')
     @patch('web_server.db.create_recording')
+    @patch('web_server.db.find_meeting_by_datetime')
     @patch('web_server.db.save_meetings')
     @patch('web_server.VodService')
     def test_import_vod_recording_status_initialized(self, mock_vod_service_class,
-                                                      mock_save_meetings, mock_create_recording,
-                                                      mock_thread, client):
+                                                      mock_save_meetings, mock_find_meeting,
+                                                      mock_create_recording, mock_thread, client):
         """Test that recording is created with 'downloading' status."""
         mock_vod_service = Mock()
         mock_vod_service_class.return_value = mock_vod_service
         mock_vod_service.validate_escriba_url.return_value = True
-        mock_vod_service.extract_meeting_info.return_value = {
-            'title': 'Meeting Title',
-            'datetime': datetime(2024, 4, 22, 11, 8),
-            'timestamp': '2024-04-22_11-08',
-            'link': 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
-        }
-        mock_save_meetings.return_value = 42
+        mock_vod_service.extract_meeting_info.return_value = get_mock_meeting_info()
+        mock_save_meetings.return_value = 1
+        mock_find_meeting.return_value = {'id': 42, 'title': 'Meeting Title'}
         mock_create_recording.return_value = 100
 
         response = client.post('/api/recordings/import-vod', json={

@@ -719,17 +719,28 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
             'message': f'Failed to extract meeting information: {str(e)}'
         }), 500
 
+    # Convert timestamp from integer to string format for folder naming
+    timestamp_str = datetime.fromtimestamp(meeting_info['timestamp'], tz=CALGARY_TZ).strftime('%Y-%m-%d_%H-%M')
+
     # Apply overrides if provided
     if override_title:
         meeting_info['title'] = override_title
     if override_datetime:
         meeting_info['datetime'] = override_datetime
         # Update timestamp to match new datetime
-        meeting_info['timestamp'] = override_datetime.strftime('%Y-%m-%d_%H-%M')
+        timestamp_str = override_datetime.strftime('%Y-%m-%d_%H-%M')
+
+    # Add raw_date field required by save_meetings
+    meeting_info['raw_date'] = meeting_info['datetime'].strftime('%Y-%m-%d %H:%M:%S')
 
     # Save meeting to database
     try:
-        meeting_id = db.save_meetings([meeting_info])
+        db.save_meetings([meeting_info])
+        # Retrieve the meeting ID by finding the meeting we just saved
+        saved_meeting = db.find_meeting_by_datetime(meeting_info['datetime'])
+        if not saved_meeting:
+            raise Exception("Failed to retrieve saved meeting from database")
+        meeting_id = saved_meeting['id']
     except Exception as e:
         logger.error(f"Failed to save meeting to database: {e}", exc_info=True)
         return jsonify({
@@ -738,7 +749,7 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
         }), 500
 
     # Create output path
-    output_path = os.path.join(OUTPUT_DIR, meeting_info['timestamp'], 'recording.mkv')
+    output_path = os.path.join(OUTPUT_DIR, timestamp_str, 'recording.mkv')
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     # Create recording record with 'downloading' status
@@ -770,42 +781,14 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
             logger.info(f"Starting VOD download for recording {recording_id} from {escriba_url}")
 
             # Download the video
-            downloaded_path = vod_service.download_vod(escriba_url, output_path)
+            vod_service.download_vod(escriba_url, output_path)
 
-            # Get file size and duration
-            file_size = os.path.getsize(downloaded_path) if os.path.exists(downloaded_path) else 0
-
-            # Calculate duration using ffprobe if available
-            duration_seconds = None
-            try:
-                import subprocess
-                result = subprocess.run(
-                    ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-                     '-of', 'default=noprint_wrappers=1:nokey=1', downloaded_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    duration_seconds = int(float(result.stdout.strip()))
-            except Exception as e:
-                logger.warning(f"Could not determine video duration: {e}")
-
-            # Update recording to completed
+            # Update recording to completed (file size and duration are calculated by update_recording)
             db.update_recording(
                 recording_id,
                 datetime.now(CALGARY_TZ),
                 'completed'
             )
-
-            # Update file size and duration if available
-            with db.get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE recordings
-                    SET file_size_bytes = ?, duration_seconds = ?
-                    WHERE id = ?
-                """, (file_size, duration_seconds, recording_id))
 
             logger.info(f"VOD download completed for recording {recording_id}")
 
