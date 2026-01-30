@@ -8,7 +8,10 @@ since the files are the source of truth.
 """
 
 import os
+import logging
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def detect_transcription_progress(video_path: str) -> Dict:
@@ -247,12 +250,12 @@ def reset_step(video_path: str, step_name: str) -> bool:
             if os.path.exists(f):
                 os.remove(f)
                 deleted_count += 1
-                print(f"[RESET] Deleted: {f}")
+                logger.info(f"Deleted: {f}")
 
         return deleted_count > 0
 
     except Exception as e:
-        print(f"[RESET] Error resetting step {step_name}: {e}")
+        logger.error(f"Error resetting step {step_name}: {e}", exc_info=True)
         return False
 
 

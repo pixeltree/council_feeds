@@ -4,6 +4,7 @@ Web server module for Calgary Council Stream Recorder.
 Provides a simple web interface to view recording status and upcoming meetings.
 """
 
+import logging
 from flask import Flask, render_template, jsonify, send_file, request
 import database as db
 from datetime import datetime
@@ -13,6 +14,7 @@ from post_processor import PostProcessor
 import threading
 from shared_state import monitoring_state
 
+logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # Global reference to recording service (set by main.py)
@@ -348,7 +350,7 @@ def process_recording(recording_id):
     def run_processing():
         processor = PostProcessor()
         result = processor.process_recording(recording['file_path'], recording_id)
-        print(f"Post-processing result for recording {recording_id}: {result}")
+        logger.info(f"Post-processing result for recording {recording_id}: {result}")
 
     thread = threading.Thread(target=run_processing, daemon=True)
     thread.start()
@@ -409,13 +411,13 @@ def download_recording_diarization(recording_id):
     # Try Gemini-refined first
     gemini_path = recording.get('diarization_gemini_path')
     if gemini_path and os.path.exists(gemini_path):
-        print(f"[WEB] Serving gemini diarization for recording {recording_id}")
+        logger.info(f"Serving gemini diarization for recording {recording_id}")
         return send_file(gemini_path, as_attachment=True)
 
     # Fall back to pyannote
     pyannote_path = recording.get('diarization_pyannote_path')
     if pyannote_path and os.path.exists(pyannote_path):
-        print(f"[WEB] Serving pyannote diarization for recording {recording_id}")
+        logger.info(f"Serving pyannote diarization for recording {recording_id}")
         return send_file(pyannote_path, as_attachment=True)
 
     # Fall back to legacy path
@@ -423,10 +425,10 @@ def download_recording_diarization(recording_id):
     if file_path:
         legacy_path = file_path + '.diarization.json'
         if os.path.exists(legacy_path):
-            print(f"[WEB] Serving legacy diarization for recording {recording_id}")
+            logger.info(f"Serving legacy diarization for recording {recording_id}")
             return send_file(legacy_path, as_attachment=True)
 
-    print(f"[WEB] Diarization file not found for recording {recording_id}")
+    logger.warning(f"Diarization file not found for recording {recording_id}")
     return "Diarization file not found", 404
 
 
@@ -440,7 +442,7 @@ def download_recording_diarization_pyannote(recording_id):
 
     pyannote_path = recording.get('diarization_pyannote_path')
     if pyannote_path and os.path.exists(pyannote_path):
-        print(f"[WEB] Serving pyannote diarization for recording {recording_id}")
+        logger.info(f"Serving pyannote diarization for recording {recording_id}")
         return send_file(pyannote_path, as_attachment=True)
 
     # Fall back to trying file_path based path
@@ -450,7 +452,7 @@ def download_recording_diarization_pyannote(recording_id):
         if os.path.exists(fallback_path):
             return send_file(fallback_path, as_attachment=True)
 
-    print(f"[WEB] Pyannote diarization file not found for recording {recording_id}")
+    logger.warning(f"Pyannote diarization file not found for recording {recording_id}")
     return "Pyannote diarization file not found", 404
 
 
@@ -464,7 +466,7 @@ def download_recording_diarization_gemini(recording_id):
 
     gemini_path = recording.get('diarization_gemini_path')
     if gemini_path and os.path.exists(gemini_path):
-        print(f"[WEB] Serving gemini diarization for recording {recording_id}")
+        logger.info(f"Serving gemini diarization for recording {recording_id}")
         return send_file(gemini_path, as_attachment=True)
 
     # Fall back to trying file_path based path
@@ -474,7 +476,7 @@ def download_recording_diarization_gemini(recording_id):
         if os.path.exists(fallback_path):
             return send_file(fallback_path, as_attachment=True)
 
-    print(f"[WEB] Gemini diarization file not found for recording {recording_id}")
+    logger.warning(f"Gemini diarization file not found for recording {recording_id}")
     return "Gemini diarization file not found", 404
 
 
@@ -729,11 +731,11 @@ def api_transcribe_recording(recording_id):
                 db.add_transcription_log(recording_id, 'Transcription completed successfully', 'info')
                 db.add_recording_log(recording_id, 'Transcription completed successfully', 'info')
 
-            print(f"Transcription completed for recording {recording_id}")
+            logger.info(f"Transcription completed for recording {recording_id}")
 
         except Exception as e:
             error_msg = str(e)
-            print(f"Transcription failed for recording {recording_id}: {error_msg}")
+            logger.error(f"Transcription failed for recording {recording_id}: {error_msg}", exc_info=True)
             db.update_transcription_status(recording_id, 'failed', error_msg)
             db.add_transcription_log(recording_id, f'Transcription failed: {error_msg}', 'error')
             db.add_recording_log(recording_id, f'Transcription failed: {error_msg}', 'error')
@@ -1015,5 +1017,5 @@ def run_server(host=None, port=None):
 
 
 if __name__ == '__main__':
-    print(f"Starting web server on http://{WEB_HOST}:{WEB_PORT}")
+    logger.info(f"Starting web server on http://{WEB_HOST}:{WEB_PORT}")
     run_server()

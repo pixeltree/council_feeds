@@ -6,9 +6,12 @@ Can be run manually or scheduled via cron.
 
 import os
 import sys
+import logging
 from post_processor import PostProcessor
 import database as db
 from config import POST_PROCESS_SILENCE_THRESHOLD_DB, POST_PROCESS_MIN_SILENCE_DURATION
+
+logger = logging.getLogger(__name__)
 
 
 def process_unprocessed_recordings(limit: int = 50):
@@ -21,15 +24,15 @@ def process_unprocessed_recordings(limit: int = 50):
     Returns:
         Dictionary with processing statistics
     """
-    print("=" * 60)
-    print("POST-PROCESSING UNPROCESSED RECORDINGS")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("POST-PROCESSING UNPROCESSED RECORDINGS")
+    logger.info("=" * 60)
 
     # Get unprocessed recordings
     recordings = db.get_unprocessed_recordings(limit=limit)
 
     if not recordings:
-        print("No unprocessed recordings found.")
+        logger.info("No unprocessed recordings found.")
         return {
             "total": 0,
             "processed": 0,
@@ -37,7 +40,7 @@ def process_unprocessed_recordings(limit: int = 50):
             "skipped": 0
         }
 
-    print(f"\nFound {len(recordings)} unprocessed recording(s)")
+    logger.info(f"Found {len(recordings)} unprocessed recording(s)")
 
     # Initialize post-processor
     processor = PostProcessor(
@@ -53,13 +56,13 @@ def process_unprocessed_recordings(limit: int = 50):
     }
 
     for i, recording in enumerate(recordings, 1):
-        print(f"\n[{i}/{len(recordings)}] Processing recording ID {recording['id']}")
-        print(f"  File: {recording['file_path']}")
-        print(f"  Meeting: {recording['meeting_title'] or 'Unknown'}")
+        logger.info(f"[{i}/{len(recordings)}] Processing recording ID {recording['id']}")
+        logger.info(f"  File: {recording['file_path']}")
+        logger.info(f"  Meeting: {recording['meeting_title'] or 'Unknown'}")
 
         # Check if file exists
         if not os.path.exists(recording['file_path']):
-            print(f"  ✗ File not found - skipping")
+            logger.warning(f"  File not found - skipping")
             db.update_post_process_status(recording['id'], 'failed', 'File not found')
             stats['failed'] += 1
             continue
@@ -73,27 +76,27 @@ def process_unprocessed_recordings(limit: int = 50):
 
             if result.get('success'):
                 stats['processed'] += 1
-                print(f"  ✓ Successfully processed - {result.get('segments_created', 0)} segments created")
+                logger.info(f"  Successfully processed - {result.get('segments_created', 0)} segments created")
             elif result.get('deleted'):
                 stats['processed'] += 1
-                print(f"  ✓ Processed - recording removed (no audio)")
+                logger.info(f"  Processed - recording removed (no audio)")
             else:
                 stats['failed'] += 1
-                print(f"  ✗ Processing failed: {result.get('error', 'Unknown error')}")
+                logger.error(f"  Processing failed: {result.get('error', 'Unknown error')}")
         except Exception as e:
-            print(f"  ✗ Exception during processing: {e}")
+            logger.error(f"  Exception during processing: {e}", exc_info=True)
             db.update_post_process_status(recording['id'], 'failed', str(e))
             stats['failed'] += 1
 
     # Print summary
-    print("\n" + "=" * 60)
-    print("PROCESSING COMPLETE")
-    print("=" * 60)
-    print(f"Total recordings:    {stats['total']}")
-    print(f"Successfully processed: {stats['processed']}")
-    print(f"Failed:              {stats['failed']}")
-    print(f"Skipped:             {stats['skipped']}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("PROCESSING COMPLETE")
+    logger.info("=" * 60)
+    logger.info(f"Total recordings:    {stats['total']}")
+    logger.info(f"Successfully processed: {stats['processed']}")
+    logger.info(f"Failed:              {stats['failed']}")
+    logger.info(f"Skipped:             {stats['skipped']}")
+    logger.info("=" * 60)
 
     return stats
 
@@ -105,8 +108,8 @@ if __name__ == '__main__':
         try:
             limit = int(sys.argv[1])
         except ValueError:
-            print(f"Usage: {sys.argv[0]} [limit]")
-            print(f"  limit: Maximum number of recordings to process (default: 50)")
+            logger.error(f"Usage: {sys.argv[0]} [limit]")
+            logger.error(f"  limit: Maximum number of recordings to process (default: 50)")
             sys.exit(1)
 
     # Run processing

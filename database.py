@@ -7,6 +7,7 @@ All datetime values are stored in ISO format with timezone information.
 When retrieving, they are parsed back to timezone-aware datetime objects.
 """
 
+import logging
 import sqlite3
 import os
 from datetime import datetime
@@ -15,6 +16,9 @@ from contextlib import contextmanager
 
 # Import configuration
 from config import DB_DIR, DB_PATH, CALGARY_TZ
+
+# Set up module logger
+logger = logging.getLogger(__name__)
 
 
 def parse_datetime_from_db(dt_str: str) -> datetime:
@@ -1282,23 +1286,24 @@ def delete_recording(recording_id: int) -> bool:
             try:
                 os.remove(file_path)
             except Exception as e:
-                print(f"Warning: Could not delete file {file_path}: {e}")
+                logger.warning(f"Could not delete file {file_path}: {e}", exc_info=True)
 
         return True
 
 
 if __name__ == '__main__':
     # Initialize database when run directly
-    print("Initializing database...")
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.info("Initializing database...")
     init_database()
-    print(f"Database initialized at: {DB_PATH}")
+    logger.info(f"Database initialized at: {DB_PATH}")
 
     # Show stats
     stats = get_recording_stats()
-    print("\nDatabase Statistics:")
-    print(f"  Total recordings: {stats['total_recordings']}")
-    print(f"  Completed: {stats['completed']}")
-    print(f"  Failed: {stats['failed']}")
-    print(f"  In progress: {stats['in_progress']}")
-    print(f"  Total duration: {stats['total_duration_seconds']} seconds")
-    print(f"  Total size: {stats['total_size_gb']} GB")
+    logger.info("\nDatabase Statistics:")
+    logger.info(f"  Total recordings: {stats['total_recordings']}")
+    logger.info(f"  Completed: {stats['completed']}")
+    logger.info(f"  Failed: {stats['failed']}")
+    logger.info(f"  In progress: {stats['in_progress']}")
+    logger.info(f"  Total duration: {stats['total_duration_seconds']} seconds")
+    logger.info(f"  Total size: {stats['total_size_gb']} GB")
