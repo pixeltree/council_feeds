@@ -1,10 +1,10 @@
 """Unit tests for VodService."""
 
-import os
 import pytest
 import responses
+import subprocess
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from services.vod_service import VodService
 from config import CALGARY_TZ
 
@@ -156,7 +156,8 @@ class TestVodService:
         assert video_url is not None
         assert 'video.isilive.ca' in video_url
         assert 'calgary' in video_url
-        assert 'Council Primary' in video_url
+        # URL should be properly encoded (spaces become %20)
+        assert 'Council%20Primary' in video_url or 'Council Primary' in video_url
 
     @responses.activate
     def test_extract_video_url_direct_mp4(self):
@@ -208,23 +209,79 @@ class TestVodService:
         video_url = service.extract_video_url(url)
         assert video_url is None
 
+    def test_extract_video_url_invalid_url(self):
+        """Test extract_video_url with invalid URL."""
+        service = VodService()
+        url = 'https://evil.com/Meeting.aspx?Id=test123'
+
+        video_url = service.extract_video_url(url)
+        assert video_url is None
+
+    @responses.activate
+    def test_extract_meeting_info_http_error(self):
+        """Test extract_meeting_info with HTTP 500 error."""
+        service = VodService()
+        url = 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
+
+        responses.add(
+            responses.GET,
+            url,
+            status=500
+        )
+
+        with pytest.raises(ValueError, match="Failed to fetch meeting info"):
+            service.extract_meeting_info(url)
+
+    @responses.activate
+    def test_extract_meeting_info_timeout(self):
+        """Test extract_meeting_info with timeout."""
+        service = VodService()
+        url = 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
+
+        responses.add(
+            responses.GET,
+            url,
+            body=responses.ConnectionError("Connection timeout")
+        )
+
+        with pytest.raises(ValueError, match="Failed to fetch meeting info"):
+            service.extract_meeting_info(url)
+
+    @responses.activate
+    def test_extract_video_url_http_error(self):
+        """Test extract_video_url with HTTP error."""
+        service = VodService()
+        url = 'https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=test123'
+
+        responses.add(
+            responses.GET,
+            url,
+            status=500
+        )
+
+        video_url = service.extract_video_url(url)
+        assert video_url is None
+
     @patch('subprocess.run')
     def test_download_with_ytdlp_success(self, mock_run, tmp_path):
         """Test successful download with yt-dlp."""
         service = VodService()
         output_file = tmp_path / "recording.mkv"
 
-        # Mock successful yt-dlp execution
-        mock_run.return_value = Mock(returncode=0, stderr='', stdout='')
+        # Mock successful yt-dlp execution that creates file
+        def mock_subprocess(*args, **kwargs):
+            # Simulate yt-dlp creating the file
+            output_file.touch()
+            return Mock(returncode=0, stderr='', stdout='')
 
-        # Create the output file to simulate download
-        output_file.touch()
+        mock_run.side_effect = mock_subprocess
 
         service._download_with_ytdlp('https://example.com/video', str(output_file))
 
         mock_run.assert_called_once()
         assert mock_run.call_args[0][0][0] == service.ytdlp_command
         assert '--merge-output-format' in mock_run.call_args[0][0]
+        assert output_file.exists()
 
     @patch('subprocess.run')
     def test_download_with_ytdlp_failure(self, mock_run):
@@ -243,11 +300,13 @@ class TestVodService:
         service = VodService()
         output_file = tmp_path / "recording.mkv"
 
-        # Mock successful ffmpeg execution
-        mock_run.return_value = Mock(returncode=0, stderr='', stdout='')
+        # Mock successful ffmpeg execution that creates file
+        def mock_subprocess(*args, **kwargs):
+            # Simulate ffmpeg creating the file
+            output_file.touch()
+            return Mock(returncode=0, stderr='', stdout='')
 
-        # Create the output file to simulate download
-        output_file.touch()
+        mock_run.side_effect = mock_subprocess
 
         service._download_with_ffmpeg('https://example.com/video.mp4', str(output_file))
 
@@ -257,6 +316,7 @@ class TestVodService:
         assert '-i' in args
         assert '-c' in args
         assert 'copy' in args
+        assert output_file.exists()
 
     @patch('subprocess.run')
     def test_download_with_ffmpeg_failure(self, mock_run):
@@ -268,6 +328,39 @@ class TestVodService:
 
         with pytest.raises(RuntimeError, match="ffmpeg download failed"):
             service._download_with_ffmpeg('https://example.com/video.mp4', '/tmp/output.mkv')
+
+    @patch('subprocess.run')
+    def test_download_with_ytdlp_timeout(self, mock_run):
+        """Test yt-dlp download timeout."""
+        service = VodService()
+
+        # Mock timeout
+        mock_run.side_effect = subprocess.TimeoutExpired('yt-dlp', 3600)
+
+        with pytest.raises(RuntimeError, match="timed out after 1 hour"):
+            service._download_with_ytdlp('https://example.com/video', '/tmp/output.mkv')
+
+    @patch('subprocess.run')
+    def test_download_with_ffmpeg_timeout(self, mock_run):
+        """Test ffmpeg download timeout."""
+        service = VodService()
+
+        # Mock timeout
+        mock_run.side_effect = subprocess.TimeoutExpired('ffmpeg', 3600)
+
+        with pytest.raises(RuntimeError, match="timed out after 1 hour"):
+            service._download_with_ffmpeg('https://example.com/video.mp4', '/tmp/output.mkv')
+
+    @patch('subprocess.run')
+    def test_download_with_ytdlp_no_file_created(self, mock_run):
+        """Test yt-dlp completes but doesn't create file."""
+        service = VodService()
+
+        # Mock successful execution but no file created
+        mock_run.return_value = Mock(returncode=0, stderr='', stdout='')
+
+        with pytest.raises(RuntimeError, match="no output file was created"):
+            service._download_with_ytdlp('https://example.com/video', '/tmp/output.mkv')
 
     @patch('services.vod_service.VodService._download_with_ytdlp')
     def test_download_vod_ytdlp_success(self, mock_ytdlp, tmp_path):

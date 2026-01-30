@@ -12,7 +12,7 @@ import re
 import subprocess
 from datetime import datetime
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -122,6 +122,12 @@ class VodService:
                 'timestamp': int(meeting_date.timestamp())
             }
 
+        except ValueError:
+            # Preserve explicitly raised ValueError messages (e.g., invalid URL, missing meeting ID)
+            raise
+        except requests.RequestException as e:
+            self.logger.error(f"Failed to fetch meeting info from {escriba_url}: {e}")
+            raise ValueError(f"Failed to fetch meeting info: {e}")
         except Exception as e:
             self.logger.error(f"Failed to extract meeting info from {escriba_url}: {e}")
             raise ValueError(f"Failed to extract meeting info: {e}")
@@ -203,6 +209,11 @@ class VodService:
         Returns:
             Video URL or None if not found
         """
+        # Validate Escriba URL before making any HTTP requests
+        if not self.validate_escriba_url(escriba_url):
+            self.logger.error(f"Invalid Escriba URL: {escriba_url}")
+            return None
+
         try:
             response = requests.get(escriba_url, timeout=30)
             response.raise_for_status()
@@ -215,14 +226,16 @@ class VodService:
                 stream_name = player_div.get('data-stream_name')
 
                 if client_id and stream_name:
-                    # Construct ISILive VOD URL
+                    # Construct ISILive VOD URL with proper URL encoding
                     # Pattern observed: video.isilive.ca/vod/{client_id}/{stream_name}
-                    video_url = f"https://video.isilive.ca/vod/{client_id}/{stream_name}"
+                    encoded_client_id = quote(str(client_id), safe='')
+                    encoded_stream_name = quote(str(stream_name), safe='')
+                    video_url = f"https://video.isilive.ca/vod/{encoded_client_id}/{encoded_stream_name}"
                     self.logger.info(f"Extracted ISILive video URL: {video_url}")
                     return video_url
 
-            # Try to find mp4 links directly
-            mp4_pattern = re.compile(r'https?://[^\s"\']+\.mp4[^\s"\']*')
+            # Try to find mp4 links directly (strict pattern to match only valid video URLs)
+            mp4_pattern = re.compile(r'https?://[^\s"\']+\.mp4(?:\?[^\s"\']*)?(?=#|$|[\s"\'])')
             matches = mp4_pattern.findall(response.text)
             if matches:
                 return matches[0]
@@ -296,7 +309,7 @@ class VodService:
             RuntimeError: If download fails
         """
         # Remove extension from output path for yt-dlp template
-        output_template = output_path.rsplit('.', 1)[0]
+        output_template, _ = os.path.splitext(output_path)
 
         cmd = [
             self.ytdlp_command,
@@ -310,12 +323,16 @@ class VodService:
 
         self.logger.debug(f"Running: {' '.join(cmd)}")
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600  # 1 hour timeout
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout
+            )
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"yt-dlp download timed out after 1 hour")
+            raise RuntimeError("yt-dlp download timed out after 1 hour")
 
         if result.returncode != 0:
             error_msg = result.stderr or "Unknown error"
@@ -325,6 +342,10 @@ class VodService:
         expected_path = f"{output_template}.{self.recording_format}"
         if os.path.exists(expected_path) and not os.path.exists(output_path):
             os.rename(expected_path, output_path)
+
+        # Verify that a file was actually created
+        if not os.path.exists(output_path) and not os.path.exists(expected_path):
+            raise RuntimeError(f"yt-dlp completed but no output file was created at {output_path}")
 
     def _download_with_ffmpeg(self, video_url: str, output_path: str) -> None:
         """Download video using ffmpeg.
@@ -346,12 +367,16 @@ class VodService:
 
         self.logger.debug(f"Running: {' '.join(cmd)}")
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=3600  # 1 hour timeout
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout
+            )
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"ffmpeg download timed out after 1 hour")
+            raise RuntimeError("ffmpeg download timed out after 1 hour")
 
         if result.returncode != 0:
             error_msg = result.stderr or "Unknown error"

@@ -150,18 +150,19 @@ class VodService:
 - ✅ Test coverage comprehensive (all functions tested)
 - ⚠️ Note: Tests were written after implementation (not TDD)
 
-### Phase 2: API Integration (PR #2) ✅ DONE
+### Phase 2: API Integration (PR #2) - NOT YET IMPLEMENTED
 
 **Branch:** `feature/vod-import-api`
 
 **TDD Workflow:**
-1. ⚠️ **Should have been**: Write `tests/test_vod_api.py` first with failing tests
-2. ✅ **Actually done**: API endpoint first, then tests (not true TDD)
-3. 📝 **Lesson**: Future API endpoints must be test-driven
+1. **RED**: Write `tests/test_vod_api.py` first with failing tests
+2. **GREEN**: Implement API endpoint to pass tests
+3. **REFACTOR**: Improve error handling and code quality
+4. **VERIFY**: Manual API testing with curl
 
-**Files modified:**
-- ✅ `web_server.py` - Added import endpoint and VodService import
-- ✅ `tests/test_vod_api.py` - Comprehensive API tests
+**Files to modify:**
+- `web_server.py` - Add import endpoint and VodService import
+- `tests/test_vod_api.py` - Comprehensive API tests
 
 **New endpoint:**
 ```python
@@ -179,33 +180,32 @@ Response: {
 }
 ```
 
-**Features implemented:**
-- ✅ Accept Escriba meeting URL
-- ✅ Extract meeting metadata automatically
-- ✅ Allow optional overrides for title/date
-- ✅ Download video in background thread (daemon=True)
-- ✅ Create meeting record if doesn't exist
-- ✅ Create recording record with `status='downloading'`, then update to `completed` or `failed`
-- ✅ Return recording ID and meeting title for tracking
-- ✅ Proper error handling with detailed messages
-- ✅ Thread-safe database updates
+**Features to implement:**
+- [ ] Accept Escriba meeting URL
+- [ ] Extract meeting metadata automatically
+- [ ] Allow optional overrides for title/date
+- [ ] Download video in background thread (daemon=True)
+- [ ] Create meeting record if doesn't exist
+- [ ] Create recording record with `status='downloading'`, then update to `completed` or `failed`
+- [ ] Return recording ID and meeting title for tracking
+- [ ] Proper error handling with detailed messages
+- [ ] Thread-safe database updates
 
-**Tests:**
-- ✅ `tests/test_vod_api.py`
-  - ✅ Test successful VOD import request
-  - ✅ Test missing/invalid URL handling
-  - ✅ Test meeting info extraction failure
-  - ✅ Test with title and date overrides
-  - ✅ Test invalid date format handling
-  - ✅ Test background download thread behavior
-  - ✅ Test download failure handling and status updates
+**Tests to write:**
+- [ ] `tests/test_vod_api.py`
+  - [ ] Test successful VOD import request
+  - [ ] Test missing/invalid URL handling
+  - [ ] Test meeting info extraction failure
+  - [ ] Test with title and date overrides
+  - [ ] Test invalid date format handling
+  - [ ] Test background download thread behavior
+  - [ ] Test download failure handling and status updates
 
 **Pre-merge verification:**
-- ✅ All tests pass: `pytest tests/test_vod_api.py -v`
-- ✅ All existing tests still pass: `pytest tests/ -v`
-- ✅ Test coverage comprehensive (all code paths tested)
-- ✅ Manual API testing with curl
-- ⚠️ Note: Tests were written after implementation (not TDD)
+- [ ] All tests pass: `pytest tests/test_vod_api.py -v`
+- [ ] All existing tests still pass: `pytest tests/ -v`
+- [ ] Test coverage comprehensive (all code paths tested)
+- [ ] Manual API testing with curl
 
 ### Phase 3: Web UI (PR #3) - Optional
 
