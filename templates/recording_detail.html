@@ -237,25 +237,35 @@
         <div class="bg-white rounded-xl p-6 mb-5 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">📄 Transcript & Diarization</h2>
-                <div class="flex gap-2 flex-wrap">
-                    <a href="/download/transcript/{{ recording.id }}"
-                       class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm">
-                        📄 Transcript
-                    </a>
-                    {% if recording.diarization_pyannote_path %}
-                    <a href="/download/diarization/pyannote/{{ recording.id }}"
-                       class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm"
-                       title="Download original pyannote diarization">
-                        🎯 Pyannote
-                    </a>
-                    {% endif %}
-                    {% if recording.diarization_gemini_path %}
-                    <a href="/download/diarization/gemini/{{ recording.id }}"
-                       class="px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-md hover:from-purple-600 hover:to-blue-600 transition font-semibold text-sm"
-                       title="Download Gemini-refined diarization with real speaker names">
-                        ✨ Gemini
-                    </a>
-                    {% endif %}
+                <div class="relative inline-block download-dropdown">
+                    <button class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2"
+                            onclick="toggleDropdown(event, 'download-recording')">
+                        📄 Download
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+
+                    <div id="download-recording" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                        <div class="py-1">
+                            <a href="/download/transcript/{{ recording.id }}"
+                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                📄 Transcript (JSON)
+                            </a>
+                            {% if recording.diarization_pyannote_path %}
+                            <a href="/download/diarization/pyannote/{{ recording.id }}"
+                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                🎯 Pyannote Diarization
+                            </a>
+                            {% endif %}
+                            {% if recording.diarization_gemini_path %}
+                            <a href="/download/diarization/gemini/{{ recording.id }}"
+                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                ✨ Gemini Refined
+                            </a>
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="bg-gray-50 p-4 rounded-lg">
@@ -316,25 +326,35 @@
                             </div>
                         </div>
                         {% if segment.has_transcript and segment.transcript_path %}
-                            <div class="flex gap-2 flex-wrap">
-                                <a href="/download/transcript/segment/{{ segment.id }}"
-                                   class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-semibold text-sm whitespace-nowrap">
-                                    📄 Transcript
-                                </a>
-                                {% if segment.has_diarization_pyannote %}
-                                <a href="/download/diarization/pyannote/segment/{{ segment.id }}"
-                                   class="px-4 py-2 bg-purple-500 text-white rounded-md hover:bg-purple-600 transition font-semibold text-sm whitespace-nowrap"
-                                   title="Download original pyannote diarization">
-                                    🎯 Pyannote
-                                </a>
-                                {% endif %}
-                                {% if segment.has_diarization_gemini %}
-                                <a href="/download/diarization/gemini/segment/{{ segment.id }}"
-                                   class="px-4 py-2 bg-gradient-to-r from-purple-500 to-blue-500 text-white rounded-md hover:from-purple-600 hover:to-blue-600 transition font-semibold text-sm whitespace-nowrap"
-                                   title="Download Gemini-refined diarization">
-                                    ✨ Gemini
-                                </a>
-                                {% endif %}
+                            <div class="relative inline-block download-dropdown">
+                                <button class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2"
+                                        onclick="toggleDropdown(event, 'download-segment-{{ segment.id }}')">
+                                    📄 Download
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                    </svg>
+                                </button>
+
+                                <div id="download-segment-{{ segment.id }}" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                                    <div class="py-1">
+                                        <a href="/download/transcript/segment/{{ segment.id }}"
+                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            📄 Transcript (JSON)
+                                        </a>
+                                        {% if segment.has_diarization_pyannote %}
+                                        <a href="/download/diarization/pyannote/segment/{{ segment.id }}"
+                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            🎯 Pyannote Diarization
+                                        </a>
+                                        {% endif %}
+                                        {% if segment.has_diarization_gemini %}
+                                        <a href="/download/diarization/gemini/segment/{{ segment.id }}"
+                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                            ✨ Gemini Refined
+                                        </a>
+                                        {% endif %}
+                                    </div>
+                                </div>
                             </div>
                         {% endif %}
                     </div>
@@ -876,6 +896,30 @@
                 alert('❌ Error resetting transcription status');
             }
         }
+
+        // Dropdown functionality for download buttons
+        function toggleDropdown(event, dropdownId) {
+            event.stopPropagation();
+            const dropdown = document.getElementById(dropdownId);
+            const allDropdowns = document.querySelectorAll('.download-dropdown > div:not(.hidden)');
+
+            // Close all other dropdowns
+            allDropdowns.forEach(d => {
+                if (d.id !== dropdownId) d.classList.add('hidden');
+            });
+
+            // Toggle this dropdown
+            dropdown.classList.toggle('hidden');
+        }
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(event) {
+            if (!event.target.closest('.download-dropdown')) {
+                document.querySelectorAll('.download-dropdown > div').forEach(d => {
+                    d.classList.add('hidden');
+                });
+            }
+        });
     </script>
 </body>
 </html>
