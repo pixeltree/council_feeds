@@ -33,7 +33,7 @@ class TestTranscriptionService:
         service = TranscriptionService(device="cpu")
         assert service.device == "cpu"
 
-    @patch('transcription_service.WhisperModel')
+    @patch('transcription.whisper_service.WhisperModel')
     def test_load_whisper_model(self, mock_whisper_model):
         """Test lazy loading of Whisper model."""
         mock_model = Mock()
@@ -358,7 +358,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
@@ -492,7 +492,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
@@ -579,7 +579,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
@@ -709,11 +709,11 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
-    @patch('concurrent.futures.ThreadPoolExecutor')
+    @patch('transcription_service.ThreadPoolExecutor')
     def test_parallel_execution_of_whisper_and_diarization(self, mock_executor_class, mock_progress, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
         """Test that Whisper and Diarization run in parallel when both need to execute."""
         # Mock resumability detection to return no completed steps
@@ -804,7 +804,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
