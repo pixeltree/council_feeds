@@ -226,28 +226,34 @@
                 <h2 class="text-gray-800 text-2xl font-bold">📄 Transcript & Diarization</h2>
                 <div class="relative inline-block download-dropdown">
                     <button class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2"
-                            onclick="toggleDropdown(event, 'download-recording')">
+                            onclick="toggleDropdown(event, 'download-recording')"
+                            aria-haspopup="true"
+                            aria-expanded="false"
+                            aria-controls="download-recording">
                         📄 Download
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                         </svg>
                     </button>
 
-                    <div id="download-recording" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                    <div id="download-recording" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10" role="menu">
                         <div class="py-1">
                             <a href="/download/transcript/{{ recording.id }}"
-                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                               role="menuitem">
                                 📄 Transcript (JSON)
                             </a>
                             {% if recording.diarization_pyannote_path %}
                             <a href="/download/diarization/pyannote/{{ recording.id }}"
-                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                               role="menuitem">
                                 🎯 Pyannote Diarization
                             </a>
                             {% endif %}
                             {% if recording.diarization_gemini_path %}
                             <a href="/download/diarization/gemini/{{ recording.id }}"
-                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                               class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                               role="menuitem">
                                 ✨ Gemini Refined
                             </a>
                             {% endif %}
@@ -266,7 +272,7 @@
 
         <!-- Segments Card -->
         {% if recording.is_segmented and segments %}
-        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
+        <div id="segments" class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">
                 📊 Segments ({{ segments|length }})
             </h2>
@@ -310,28 +316,34 @@
                         {% if segment.has_transcript and segment.transcript_path %}
                             <div class="relative inline-block download-dropdown">
                                 <button class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2"
-                                        onclick="toggleDropdown(event, 'download-segment-{{ segment.id }}')">
+                                        onclick="toggleDropdown(event, 'download-segment-{{ segment.id }}')"
+                                        aria-haspopup="true"
+                                        aria-expanded="false"
+                                        aria-controls="download-segment-{{ segment.id }}">
                                     📄 Download
                                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                                     </svg>
                                 </button>
 
-                                <div id="download-segment-{{ segment.id }}" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
+                                <div id="download-segment-{{ segment.id }}" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10" role="menu">
                                     <div class="py-1">
                                         <a href="/download/transcript/segment/{{ segment.id }}"
-                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                           role="menuitem">
                                             📄 Transcript (JSON)
                                         </a>
                                         {% if segment.has_diarization_pyannote %}
                                         <a href="/download/diarization/pyannote/segment/{{ segment.id }}"
-                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                           role="menuitem">
                                             🎯 Pyannote Diarization
                                         </a>
                                         {% endif %}
                                         {% if segment.has_diarization_gemini %}
                                         <a href="/download/diarization/gemini/segment/{{ segment.id }}"
-                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                                           role="menuitem">
                                             ✨ Gemini Refined
                                         </a>
                                         {% endif %}
@@ -365,7 +377,7 @@
         {% if logs %}
         <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <details>
-                <summary class="cursor-pointer text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200 inline-flex items-center gap-2">
+                <summary class="cursor-pointer text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200 flex items-center gap-2 w-full">
                     📝 Processing Logs
                     <span class="text-sm font-normal text-gray-600">({{ logs|length }} entries)</span>
                     <svg class="w-5 h-5 transform transition-transform ml-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -882,29 +894,102 @@
             }
         }
 
-        // Dropdown functionality for download buttons
+        // Dropdown functionality for download buttons with accessibility
+        function closeAllDropdowns(exceptId) {
+            const allDropdowns = document.querySelectorAll('.download-dropdown > div:not(.hidden)');
+            allDropdowns.forEach(d => {
+                if (!exceptId || d.id !== exceptId) {
+                    d.classList.add('hidden');
+                }
+            });
+
+            // Reset aria-expanded on toggle buttons
+            const toggles = document.querySelectorAll('.download-dropdown [aria-expanded="true"]');
+            toggles.forEach(t => t.setAttribute('aria-expanded', 'false'));
+        }
+
         function toggleDropdown(event, dropdownId) {
             event.stopPropagation();
             const dropdown = document.getElementById(dropdownId);
-            const allDropdowns = document.querySelectorAll('.download-dropdown > div:not(.hidden)');
+            if (!dropdown) return;
 
             // Close all other dropdowns
-            allDropdowns.forEach(d => {
-                if (d.id !== dropdownId) d.classList.add('hidden');
-            });
+            closeAllDropdowns(dropdownId);
 
             // Toggle this dropdown
+            const isHidden = dropdown.classList.contains('hidden');
             dropdown.classList.toggle('hidden');
+
+            // Update aria-expanded on the toggle button
+            const toggleButton = event.currentTarget || event.target;
+            if (toggleButton && toggleButton.setAttribute) {
+                toggleButton.setAttribute('aria-expanded', isHidden ? 'true' : 'false');
+            }
         }
 
         // Close dropdowns when clicking outside
         document.addEventListener('click', function(event) {
             if (!event.target.closest('.download-dropdown')) {
-                document.querySelectorAll('.download-dropdown > div').forEach(d => {
-                    d.classList.add('hidden');
-                });
+                closeAllDropdowns();
             }
         });
+
+        // Keyboard accessibility for dropdowns
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                const hasOpenDropdown = document.querySelector('.download-dropdown > div:not(.hidden)');
+                if (hasOpenDropdown) {
+                    event.stopPropagation();
+                    event.preventDefault();
+                    closeAllDropdowns();
+                }
+            }
+        });
+
+        // Initialize dropdown accessibility
+        function initDropdownAccessibility() {
+            // Handle Enter/Space on toggle buttons
+            const dropdownToggles = document.querySelectorAll('.download-dropdown button[onclick*="toggleDropdown"]');
+            dropdownToggles.forEach(function(toggle) {
+                toggle.addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        toggle.click();
+                    }
+                });
+            });
+
+            // Enable arrow key navigation within menus
+            const menus = document.querySelectorAll('.download-dropdown [role="menu"]');
+            menus.forEach(function(menu) {
+                menu.addEventListener('keydown', function(event) {
+                    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+
+                    const items = Array.from(menu.querySelectorAll('[role="menuitem"]'))
+                        .filter(el => !el.hasAttribute('disabled'));
+                    if (items.length === 0) return;
+
+                    event.preventDefault();
+                    const currentIndex = items.indexOf(document.activeElement);
+                    let nextIndex;
+
+                    if (event.key === 'ArrowDown') {
+                        nextIndex = currentIndex === -1 || currentIndex === items.length - 1 ? 0 : currentIndex + 1;
+                    } else {
+                        nextIndex = currentIndex <= 0 ? items.length - 1 : currentIndex - 1;
+                    }
+
+                    items[nextIndex].focus();
+                });
+            });
+        }
+
+        // Initialize on DOM ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initDropdownAccessibility);
+        } else {
+            initDropdownAccessibility();
+        }
     </script>
 </body>
 </html>

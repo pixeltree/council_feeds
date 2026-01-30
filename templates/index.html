@@ -200,7 +200,7 @@
                             ⏸️ Stop Monitoring
                         </button>
                     {% else %}
-                        <button id="start-monitoring-button" onclick="startMonitoring()" class="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                        <button id="start-monitoring-button" onclick="startMonitoring()" class="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed text-sm">
                             ▶️ Start Monitoring
                         </button>
                     {% endif %}
@@ -221,7 +221,7 @@
                         <div class="text-gray-800 text-base font-bold">{{ current_recording.meeting_title or 'Unscheduled' }}</div>
                     </div>
                 </div>
-                <button id="stop-button" onclick="stopRecording()" class="mt-4 bg-red-600 hover:bg-red-700 text-white font-semibold px-5 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed">
+                <button id="stop-button" onclick="stopRecording()" class="mt-4 bg-red-600 hover:bg-red-700 text-white font-semibold px-5 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
                     Stop Recording
                 </button>
             {% else %}
@@ -245,7 +245,7 @@
         <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">Recording Statistics</h2>
-                <button id="cleanup-stale-button" onclick="cleanupStaleRecordings()" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                <button id="cleanup-stale-button" onclick="cleanupStaleRecordings()" class="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed text-sm">
                     🗑️ Clean Up Stale
                 </button>
             </div>
@@ -273,7 +273,7 @@
         <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
                 <h2 class="text-gray-800 text-2xl font-bold">Upcoming Meetings</h2>
-                <button id="refresh-agenda-button" onclick="refreshAgenda()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:bg-gray-400 disabled:cursor-not-allowed text-sm">
+                <button id="refresh-agenda-button" onclick="refreshAgenda()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed text-sm">
                     🔄 Refresh Agenda
                 </button>
             </div>
