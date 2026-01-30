@@ -155,6 +155,12 @@ def recordings_list() -> str:
     return render_template('recordings.html', recordings=formatted_recordings)
 
 
+@app.route('/import-vod')
+def import_vod_page() -> str:
+    """VOD import form page."""
+    return render_template('import_vod.html')
+
+
 @app.route('/recording/<int:recording_id>')
 def recording_detail(recording_id: int) -> Union[str, Tuple[str, int]]:
     """Recording detail page."""
