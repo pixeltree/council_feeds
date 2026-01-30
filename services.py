@@ -309,19 +309,17 @@ class RecordingService:
         self.stop_requested = False
         self.logger = logging.getLogger(__name__)
 
-    def record_stream(
-        self,
-        stream_url: str,
-        current_meeting: Optional[Dict] = None
-    ) -> bool:
-        """Record the stream to a file using ffmpeg, tracking in database."""
-        start_time = datetime.now(self.timezone)
-        timestamp = start_time.strftime("%Y%m%d_%H%M%S")
+    def _determine_output_paths(self, timestamp: str) -> tuple[str, Optional[str], str]:
+        """Determine output file paths and format for recording.
 
-        # Determine file extension and format
+        Args:
+            timestamp: Timestamp string for file naming
+
+        Returns:
+            Tuple of (output_file, output_pattern, format_ext)
+        """
         format_ext = RECORDING_FORMAT if RECORDING_FORMAT in ['mkv', 'mp4', 'ts'] else 'mkv'
 
-        # For segmented recording, use pattern
         if ENABLE_SEGMENTED_RECORDING:
             output_pattern = os.path.join(
                 self.output_dir,
@@ -338,28 +336,68 @@ class RecordingService:
             )
             output_pattern = None
 
-        os.makedirs(self.output_dir, exist_ok=True)
+        return output_file, output_pattern, format_ext
 
-        if output_pattern:
-            self.logger.info(f"Starting segmented recording: {output_pattern}")
-        else:
-            self.logger.info(f"Starting recording: {output_file}")
+    def _find_meeting_id(self, current_meeting: Optional[Dict]) -> Optional[int]:
+        """Find associated meeting ID in database.
 
-        # Find associated meeting in database
-        meeting_id = None
-        if current_meeting:
-            db_meeting = db.find_meeting_by_datetime(current_meeting['datetime'])
-            if db_meeting:
-                meeting_id = db_meeting['id']
-                self.logger.info(f"Associated with meeting: {db_meeting['title']}")
+        Args:
+            current_meeting: Current meeting information
 
-        # Create recording record in database
+        Returns:
+            Meeting ID if found, None otherwise
+        """
+        if not current_meeting:
+            return None
+
+        db_meeting = db.find_meeting_by_datetime(current_meeting['datetime'])
+        if db_meeting:
+            self.logger.info(f"Associated with meeting: {db_meeting['title']}")
+            return db_meeting['id']
+        return None
+
+    def _create_recording_record(
+        self,
+        meeting_id: Optional[int],
+        output_file: str,
+        stream_url: str,
+        start_time: datetime
+    ) -> int:
+        """Create recording record in database and initialize tracking.
+
+        Args:
+            meeting_id: Associated meeting ID
+            output_file: Path to output file
+            stream_url: Stream URL being recorded
+            start_time: Recording start time
+
+        Returns:
+            Recording ID
+        """
         recording_id = db.create_recording(meeting_id, output_file, stream_url, start_time)
         self.current_recording_id = recording_id
         self.stop_requested = False
         db.log_stream_status(stream_url, 'live', meeting_id, 'Recording started')
+        return recording_id
 
-        # Build ffmpeg command with resilient options
+    def _build_ffmpeg_command(
+        self,
+        stream_url: str,
+        output_file: str,
+        output_pattern: Optional[str],
+        format_ext: str
+    ) -> list[str]:
+        """Build ffmpeg command with resilient options.
+
+        Args:
+            stream_url: URL of the stream to record
+            output_file: Path to output file
+            output_pattern: Pattern for segmented recording (if enabled)
+            format_ext: File format extension
+
+        Returns:
+            List of command arguments for ffmpeg
+        """
         cmd = [self.ffmpeg_command]
 
         # Add reconnect options if enabled
@@ -405,6 +443,232 @@ class RecordingService:
 
             cmd.append(output_file)
 
+        return cmd
+
+    def _check_audio_levels(self, file_path: str) -> tuple[Optional[float], Optional[float]]:
+        """Check audio levels in a recording file.
+
+        Args:
+            file_path: Path to the file to check
+
+        Returns:
+            Tuple of (mean_volume, max_volume) in dB, or (None, None) if check fails
+        """
+        try:
+            result = subprocess.run(
+                [
+                    self.ffmpeg_command, '-i', file_path,
+                    '-af', 'volumedetect',
+                    '-f', 'null', '-'
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=True
+            )
+
+            mean_volume = None
+            max_volume = None
+            for line in result.stderr.split('\n'):
+                if 'mean_volume:' in line:
+                    try:
+                        mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                    except (ValueError, IndexError):
+                        pass
+                if 'max_volume:' in line:
+                    try:
+                        max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                    except (ValueError, IndexError):
+                        pass
+
+            return mean_volume, max_volume
+
+        except subprocess.TimeoutExpired:
+            self.logger.warning(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_path)}")
+            return None, None
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"[STATIC CHECK] Audio detection failed (ffmpeg error): {e}", exc_info=True)
+            return None, None
+        except Exception as e:
+            self.logger.error(f"[STATIC CHECK] Audio detection failed: {e}", exc_info=True)
+            return None, None
+
+    def _stop_ffmpeg_gracefully(self, process: subprocess.Popen) -> None:
+        """Stop ffmpeg process gracefully, allowing it to close files properly.
+
+        Args:
+            process: The ffmpeg process to stop
+        """
+        import signal
+        import time
+
+        self.logger.info("Sending interrupt signal to ffmpeg to close file properly...")
+
+        # Send SIGINT (Ctrl+C) to ffmpeg for clean shutdown
+        try:
+            process.send_signal(signal.SIGINT)
+        except OSError:
+            process.terminate()
+
+        # Wait up to 10 seconds for ffmpeg to finish writing
+        self.logger.info("Waiting for ffmpeg to finish writing file...")
+        for i in range(10):
+            time.sleep(1)
+            if process.poll() is not None:
+                self.logger.info(f"Recording stopped cleanly after {i+1} seconds")
+                return
+
+        # If still running, force kill
+        if process.poll() is None:
+            self.logger.warning("ffmpeg did not stop gracefully, forcing kill...")
+            process.kill()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                self.logger.error("Process did not terminate after kill signal")
+                pass
+
+    def _validate_recording_content(self, output_file: str, recording_id: int, end_time: datetime) -> bool:
+        """Validate that recording has audio content and remove if empty.
+
+        Args:
+            output_file: Path to the recording file
+            recording_id: Database ID of the recording
+            end_time: Recording end time
+
+        Returns:
+            True if recording has content, False if it was removed
+        """
+        has_content = False
+        if os.path.exists(output_file):
+            self.logger.info("Checking if recording has audio content...")
+            mean_volume, max_volume = self._check_audio_levels(output_file)
+
+            if mean_volume is not None and max_volume is not None:
+                self.logger.info(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                # If audio is reasonably loud, it has content
+                if mean_volume > -50 or max_volume > -30:
+                    has_content = True
+                else:
+                    self.logger.warning("Recording appears to have no real audio content (levels too low)")
+            else:
+                self.logger.warning("Could not detect audio levels, assuming has content")
+                has_content = True  # Default to keeping if check fails
+
+        # If no content, remove the recording
+        if not has_content:
+            self.logger.warning("No audio content detected - removing empty recording")
+            try:
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+                    self.logger.info(f"Removed empty recording file: {output_file}")
+            except Exception as e:
+                self.logger.error(f"Could not delete file: {e}", exc_info=True)
+
+            # Mark recording as failed in database
+            db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
+            self.logger.info("Recording marked as failed (no content)")
+
+        return has_content
+
+    def _run_post_processing(self, output_file: str, recording_id: int) -> bool:
+        """Run post-processing on the recording.
+
+        Args:
+            output_file: Path to the recording file
+            recording_id: Database ID of the recording
+
+        Returns:
+            True if post-processing deleted the file (skip transcription), False otherwise
+        """
+        if not ENABLE_POST_PROCESSING:
+            return False
+
+        self.logger.info("[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
+        try:
+            from post_processor import PostProcessor
+            processor = PostProcessor(
+                silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
+                min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
+                ffmpeg_command=self.ffmpeg_command
+            )
+            result = processor.process_recording(output_file, recording_id)
+            if result.get('success'):
+                self.logger.info(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
+            elif result.get('deleted'):
+                self.logger.warning(f"[POST-PROCESS] Recording removed: {result.get('message', 'No audio detected')}")
+                return True  # File was deleted
+            else:
+                self.logger.error(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
+        except Exception as e:
+            self.logger.error(f"[POST-PROCESS] Error during post-processing: {e}", exc_info=True)
+            self.logger.info("[POST-PROCESS] Original recording preserved")
+
+        return False
+
+    def _run_transcription(self, output_file: str, recording_id: int) -> None:
+        """Run transcription on the recording.
+
+        Args:
+            output_file: Path to the recording file
+            recording_id: Database ID of the recording
+        """
+        if not ENABLE_TRANSCRIPTION:
+            return
+
+        self.logger.info("[TRANSCRIPTION] Transcription enabled - generating transcript with speaker diarization")
+        try:
+            from transcription_service import TranscriptionService
+            transcriber = TranscriptionService(
+                whisper_model=WHISPER_MODEL,
+                pyannote_api_token=PYANNOTE_API_TOKEN
+            )
+
+            # Transcribe the video
+            transcript_result = transcriber.transcribe_with_speakers(output_file)
+
+            # Save formatted text version
+            text_output = output_file + '.transcript.txt'
+            formatted_text = transcriber.format_transcript_as_text(transcript_result['segments'])
+            with open(text_output, 'w', encoding='utf-8') as f:
+                f.write(formatted_text)
+
+            self.logger.info(f"[TRANSCRIPTION] Successfully transcribed with {transcript_result['num_speakers']} speakers")
+            self.logger.info(f"[TRANSCRIPTION] Transcript saved to: {text_output}")
+
+            # Update database with transcript path
+            if recording_id:
+                db.update_recording_transcript(recording_id, output_file + '.transcript.json')
+
+        except Exception as e:
+            self.logger.error(f"[TRANSCRIPTION] Error during transcription: {e}", exc_info=True)
+            self.logger.info("[TRANSCRIPTION] Recording preserved, transcription skipped")
+
+    def record_stream(
+        self,
+        stream_url: str,
+        current_meeting: Optional[Dict] = None
+    ) -> bool:
+        """Record the stream to a file using ffmpeg, tracking in database."""
+        start_time = datetime.now(self.timezone)
+        timestamp = start_time.strftime("%Y%m%d_%H%M%S")
+
+        # Determine output paths
+        output_file, output_pattern, format_ext = self._determine_output_paths(timestamp)
+        os.makedirs(self.output_dir, exist_ok=True)
+
+        if output_pattern:
+            self.logger.info(f"Starting segmented recording: {output_pattern}")
+        else:
+            self.logger.info(f"Starting recording: {output_file}")
+
+        # Find associated meeting and create recording record
+        meeting_id = self._find_meeting_id(current_meeting)
+        recording_id = self._create_recording_record(meeting_id, output_file, stream_url, start_time)
+
+        # Build and execute ffmpeg command
+        cmd = self._build_ffmpeg_command(stream_url, output_file, output_pattern, format_ext)
+
         try:
             process = subprocess.Popen(
                 cmd,
@@ -437,118 +701,38 @@ class RecordingService:
                         file_to_check = output_file
 
                     if file_to_check and os.path.exists(file_to_check):
-                        # Use ffmpeg to detect audio levels - static placeholder has silence
-                        try:
-                            # Analyze audio volume levels
-                            result = subprocess.run(
-                                [
-                                    self.ffmpeg_command, '-i', file_to_check,
-                                    '-af', 'volumedetect',
-                                    '-f', 'null', '-'
-                                ],
-                                capture_output=True,
-                                text=True,
-                                timeout=15  # Increased timeout for large files
-                            )
+                        mean_volume, max_volume = self._check_audio_levels(file_to_check)
 
-                            # Parse mean and max volume from output
-                            mean_volume = None
-                            max_volume = None
-                            for line in result.stderr.split('\n'):
-                                if 'mean_volume:' in line:
-                                    try:
-                                        mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                                    except (ValueError, IndexError):
-                                        # Ignore parsing errors in ffmpeg output; leave mean_volume as None
-                                        pass
-                                if 'max_volume:' in line:
-                                    try:
-                                        max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                                    except (ValueError, IndexError):
-                                        # Ignore parsing errors in ffmpeg output; leave max_volume as None
-                                        pass
+                        self.logger.debug(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
 
-                            self.logger.debug(f"[STATIC CHECK] Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
+                        # If audio is very quiet, likely static placeholder
+                        if mean_volume is not None and max_volume is not None:
+                            if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
+                                static_checks += 1
+                                self.logger.warning(f"Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
 
-                            # If audio is very quiet, likely static placeholder
-                            # Use same thresholds as post-processing for consistency
-                            if mean_volume and max_volume:
-                                if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
-                                    static_checks += 1
-                                    self.logger.warning(f"Low audio levels detected. Static check {static_checks}/{STATIC_MAX_FAILURES}")
-
-                                    if static_checks >= STATIC_MAX_FAILURES:
-                                        self.logger.warning("Stream appears to be static (no audio/placeholder). Stopping recording...")
-                                        db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
-                                        self.stop_requested = True
-                                else:
-                                    if static_checks > 0:
-                                        self.logger.info("[STATIC CHECK] Audio detected, resetting counter")
-                                    static_checks = 0  # Reset counter if audio detected
+                                if static_checks >= STATIC_MAX_FAILURES:
+                                    self.logger.warning("Stream appears to be static (no audio/placeholder). Stopping recording...")
+                                    db.log_stream_status(stream_url, 'static', meeting_id, 'Static content detected (silence)')
+                                    self.stop_requested = True
                             else:
-                                self.logger.warning("[STATIC CHECK] Could not parse audio levels")
-
-                        except subprocess.TimeoutExpired:
-                            self.logger.warning(f"[STATIC CHECK] Audio detection timed out on {os.path.basename(file_to_check)} - file may be corrupted or very large, skipping check")
-                        except subprocess.CalledProcessError as e:
-                            self.logger.error(f"[STATIC CHECK] Audio detection failed (ffmpeg error): {e}", exc_info=True)
-                        except Exception as e:
-                            self.logger.error(f"[STATIC CHECK] Audio detection failed: {e}", exc_info=True)
+                                if static_checks > 0:
+                                    self.logger.info("[STATIC CHECK] Audio detected, resetting counter")
+                                static_checks = 0  # Reset counter if audio detected
+                        else:
+                            self.logger.warning("[STATIC CHECK] Could not parse audio levels")
 
                 # Check if stop was requested
                 if self.stop_requested:
                     self.logger.info("Stop requested by user. Stopping recording...")
-                    self.logger.info("Sending interrupt signal to ffmpeg to close file properly...")
                     db.log_stream_status(stream_url, 'offline', meeting_id, 'Stopped by user')
-
-                    # Send SIGINT (Ctrl+C) to ffmpeg for clean shutdown
-                    # This allows ffmpeg to properly close the file and write trailing data
-                    import signal
-                    try:
-                        process.send_signal(signal.SIGINT)
-                    except OSError:
-                        # If SIGINT fails, use terminate
-                        process.terminate()
-
-                    # Wait up to 10 seconds for ffmpeg to finish writing
-                    self.logger.info("Waiting for ffmpeg to finish writing file...")
-                    for i in range(10):
-                        time.sleep(1)
-                        if process.poll() is not None:
-                            self.logger.info(f"Recording stopped cleanly after {i+1} seconds")
-                            break
-
-                    # If still running, force kill
-                    if process.poll() is None:
-                        self.logger.warning("ffmpeg did not stop gracefully, forcing kill...")
-                        process.kill()
-                        time.sleep(1)
+                    self._stop_ffmpeg_gracefully(process)
                     break
 
                 if not self.stream_service.is_stream_live(stream_url):
                     self.logger.info("Stream is no longer live. Stopping recording...")
                     db.log_stream_status(stream_url, 'offline', meeting_id, 'Stream ended')
-
-                    # Send SIGINT for clean shutdown
-                    import signal
-                    try:
-                        process.send_signal(signal.SIGINT)
-                    except OSError:
-                        # If SIGINT fails, use terminate
-                        process.terminate()
-
-                    # Wait for ffmpeg to finish writing
-                    self.logger.info("Waiting for ffmpeg to finish writing file...")
-                    for i in range(10):
-                        time.sleep(1)
-                        if process.poll() is not None:
-                            self.logger.info(f"Recording completed cleanly after {i+1} seconds")
-                            break
-
-                    if process.poll() is None:
-                        self.logger.warning("forcing kill...")
-                        process.kill()
-                        time.sleep(1)
+                    self._stop_ffmpeg_gracefully(process)
                     break
 
                 # Check if process is still running
@@ -574,127 +758,27 @@ class RecordingService:
             else:
                 self.logger.info(f"Recording saved: {output_file}")
 
-            # Check if recording has any content before marking as completed
-            has_content = False
+            # Check if recording has any content
             if os.path.exists(output_file):
                 file_size = os.path.getsize(output_file)
                 duration = int((end_time - start_time).total_seconds())
                 self.logger.info(f"Duration: {duration}s, Size: {file_size / (1024**2):.1f} MB")
 
-                # Check for audio content using volumedetect
-                self.logger.info("Checking if recording has audio content...")
-                try:
-                    result = subprocess.run(
-                        [self.ffmpeg_command, '-i', output_file, '-af', 'volumedetect', '-f', 'null', '-'],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
-                    )
-
-                    mean_volume = None
-                    max_volume = None
-                    for line in result.stderr.split('\n'):
-                        if 'mean_volume:' in line:
-                            try:
-                                mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                            except (ValueError, IndexError):
-                                # Ignore parsing errors in ffmpeg output; leave mean_volume as None
-                                pass
-                        if 'max_volume:' in line:
-                            try:
-                                max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                            except (ValueError, IndexError):
-                                # Ignore parsing errors in ffmpeg output; leave max_volume as None
-                                pass
-
-                    if mean_volume and max_volume:
-                        self.logger.info(f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB")
-                        # If audio is reasonably loud, it has content
-                        if mean_volume > -50 or max_volume > -30:
-                            has_content = True
-                        else:
-                            self.logger.warning("Recording appears to have no real audio content (levels too low)")
-                    else:
-                        self.logger.warning("Could not detect audio levels, assuming has content")
-                        has_content = True  # Default to keeping if check fails
-
-                except Exception as e:
-                    self.logger.warning(f"Audio check failed: {e}, assuming has content")
-                    has_content = True  # Default to keeping if check fails
-
-            # If no content, remove the recording
+            # Validate recording has content
+            has_content = self._validate_recording_content(output_file, recording_id, end_time)
             if not has_content:
-                self.logger.warning("No audio content detected - removing empty recording")
-                try:
-                    if os.path.exists(output_file):
-                        os.remove(output_file)
-                        self.logger.info(f"Removed empty recording file: {output_file}")
-                except Exception as e:
-                    # Log the error but don't raise - we still want to mark recording as failed in DB
-                    self.logger.error(f"Could not delete file: {e}", exc_info=True)
-
-                # Mark recording as failed in database (even if file deletion failed)
-                db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
-                self.logger.info("Recording marked as failed (no content)")
                 return True  # Return success since we handled it properly
 
             # Update recording status in database as completed
-            # Both naturally ended and manually stopped recordings are marked as completed
-            # since they cannot be restarted and should be available for post-processing
             db.update_recording(recording_id, end_time, 'completed')
 
-            # Post-processing (experimental)
-            if ENABLE_POST_PROCESSING:
-                self.logger.info("[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
-                try:
-                    from post_processor import PostProcessor
-                    processor = PostProcessor(
-                        silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-                        min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
-                        ffmpeg_command=self.ffmpeg_command
-                    )
-                    result = processor.process_recording(output_file, recording_id)
-                    if result.get('success'):
-                        self.logger.info(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
-                    elif result.get('deleted'):
-                        self.logger.warning(f"[POST-PROCESS] Recording removed: {result.get('message', 'No audio detected')}")
-                        # Skip transcription since file was deleted
-                        return True
-                    else:
-                        self.logger.error(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
-                except Exception as e:
-                    self.logger.error(f"[POST-PROCESS] Error during post-processing: {e}", exc_info=True)
-                    self.logger.info("[POST-PROCESS] Original recording preserved")
+            # Run post-processing if enabled
+            file_was_deleted = self._run_post_processing(output_file, recording_id)
+            if file_was_deleted:
+                return True  # Skip transcription since file was deleted
 
-            # Transcription (optional)
-            if ENABLE_TRANSCRIPTION:
-                self.logger.info("[TRANSCRIPTION] Transcription enabled - generating transcript with speaker diarization")
-                try:
-                    from transcription_service import TranscriptionService
-                    transcriber = TranscriptionService(
-                        whisper_model=WHISPER_MODEL,
-                        pyannote_api_token=PYANNOTE_API_TOKEN
-                    )
-
-                    # Transcribe the video
-                    transcript_result = transcriber.transcribe_with_speakers(output_file)
-
-                    # Save formatted text version
-                    text_output = output_file + '.transcript.txt'
-                    formatted_text = transcriber.format_transcript_as_text(transcript_result['segments'])
-                    with open(text_output, 'w', encoding='utf-8') as f:
-                        f.write(formatted_text)
-
-                    self.logger.info(f"[TRANSCRIPTION] Successfully transcribed with {transcript_result['num_speakers']} speakers")
-                    self.logger.info(f"[TRANSCRIPTION] Transcript saved to: {text_output}")
-
-                    # Update database with transcript path
-                    if recording_id:
-                        db.update_recording_transcript(recording_id, output_file + '.transcript.json')
-
-                except Exception as e:
-                    self.logger.error(f"[TRANSCRIPTION] Error during transcription: {e}", exc_info=True)
-                    self.logger.info("[TRANSCRIPTION] Recording preserved, transcription skipped")
+            # Run transcription if enabled
+            self._run_transcription(output_file, recording_id)
 
             return True
 
