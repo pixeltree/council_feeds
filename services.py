@@ -14,6 +14,12 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional, Tuple
 
 import database as db
+from exceptions import (
+    StreamConnectionError,
+    RecordingProcessError,
+    RecordingStorageError,
+    TranscriptionError
+)
 from config import (
     CALGARY_TZ,
     COUNCIL_CALENDAR_API,
@@ -630,6 +636,7 @@ class RecordingService:
                         self.logger.info(f"Removed empty recording file: {output_file}")
                 except Exception as e:
                     self.logger.error(f"Could not delete file: {e}", exc_info=True)
+                    raise RecordingStorageError(output_file, 'delete', str(e))
 
                 # Mark recording as failed in database
                 db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
@@ -730,7 +737,7 @@ class RecordingService:
                 return output_file
             except Exception as e:
                 self.logger.error(f"Error renaming single segment: {e}", exc_info=True)
-                return segments[0]
+                raise RecordingStorageError(segments[0], 'rename', str(e))
 
         # Create concat file list for ffmpeg
         concat_file = os.path.join(self.output_dir, f"concat_{timestamp}.txt")
@@ -771,7 +778,7 @@ class RecordingService:
 
         except Exception as e:
             self.logger.error(f"Error merging segments: {e}", exc_info=True)
-            return None
+            raise RecordingStorageError(output_file, 'merge', str(e))
 
     def stop_recording(self) -> bool:
         """Request the current recording to stop."""

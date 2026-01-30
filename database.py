@@ -16,6 +16,7 @@ from contextlib import contextmanager
 
 # Import configuration
 from config import DB_DIR, DB_PATH, CALGARY_TZ
+from exceptions import DatabaseConnectionError, DatabaseQueryError, RecordingStorageError
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -51,11 +52,18 @@ class Database:
     @contextmanager
     def get_connection(self):
         """Context manager for database connections."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row  # Enable column access by name
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.row_factory = sqlite3.Row  # Enable column access by name
+        except sqlite3.Error as e:
+            raise DatabaseConnectionError(self.db_path, str(e))
+
         try:
             yield conn
             conn.commit()
+        except sqlite3.Error as e:
+            conn.rollback()
+            raise DatabaseQueryError(error=str(e))
         except Exception:
             conn.rollback()
             raise
@@ -73,11 +81,18 @@ def ensure_db_directory():
 def get_db_connection():
     """Context manager for database connections."""
     ensure_db_directory()
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # Enable column access by name
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row  # Enable column access by name
+    except sqlite3.Error as e:
+        raise DatabaseConnectionError(DB_PATH, str(e))
+
     try:
         yield conn
         conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        raise DatabaseQueryError(error=str(e))
     except Exception:
         conn.rollback()
         raise
@@ -1287,6 +1302,7 @@ def delete_recording(recording_id: int) -> bool:
                 os.remove(file_path)
             except Exception as e:
                 logger.warning(f"Could not delete file {file_path}: {e}", exc_info=True)
+                raise RecordingStorageError(file_path, 'delete', str(e))
 
         return True
 
