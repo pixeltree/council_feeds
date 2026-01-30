@@ -298,12 +298,16 @@ class RecordingService:
         output_dir: str = OUTPUT_DIR,
         ffmpeg_command: str = FFMPEG_COMMAND,
         timezone=CALGARY_TZ,
-        stream_service: Optional[StreamService] = None
+        stream_service: Optional[StreamService] = None,
+        transcription_service: Optional['TranscriptionService'] = None,
+        post_processor: Optional['PostProcessor'] = None
     ):
         self.output_dir = output_dir
         self.ffmpeg_command = ffmpeg_command
         self.timezone = timezone
         self.stream_service = stream_service or StreamService()
+        self.transcription_service = transcription_service
+        self.post_processor = post_processor
         self.current_process = None
         self.current_recording_id = None
         self.stop_requested = False
@@ -586,12 +590,17 @@ class RecordingService:
 
         self.logger.info("[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
         try:
-            from post_processor import PostProcessor
-            processor = PostProcessor(
-                silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-                min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
-                ffmpeg_command=self.ffmpeg_command
-            )
+            # Use injected post processor or create a default one
+            if self.post_processor is None:
+                from post_processor import PostProcessor
+                processor = PostProcessor(
+                    silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
+                    min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
+                    ffmpeg_command=self.ffmpeg_command
+                )
+            else:
+                processor = self.post_processor
+
             result = processor.process_recording(output_file, recording_id)
             if result.get('success'):
                 self.logger.info(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
@@ -618,11 +627,15 @@ class RecordingService:
 
         self.logger.info("[TRANSCRIPTION] Transcription enabled - generating transcript with speaker diarization")
         try:
-            from transcription_service import TranscriptionService
-            transcriber = TranscriptionService(
-                whisper_model=WHISPER_MODEL,
-                pyannote_api_token=PYANNOTE_API_TOKEN
-            )
+            # Use injected transcription service or create a default one
+            if self.transcription_service is None:
+                from transcription_service import TranscriptionService
+                transcriber = TranscriptionService(
+                    whisper_model=WHISPER_MODEL,
+                    pyannote_api_token=PYANNOTE_API_TOKEN
+                )
+            else:
+                transcriber = self.transcription_service
 
             # Transcribe the video
             transcript_result = transcriber.transcribe_with_speakers(output_file)
