@@ -33,7 +33,7 @@ class TestTranscriptionService:
         service = TranscriptionService(device="cpu")
         assert service.device == "cpu"
 
-    @patch('transcription_service.WhisperModel')
+    @patch('transcription.whisper_service.WhisperModel')
     def test_load_whisper_model(self, mock_whisper_model):
         """Test lazy loading of Whisper model."""
         mock_model = Mock()
@@ -358,7 +358,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
@@ -492,7 +492,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
@@ -579,7 +579,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('os.remove')
@@ -709,7 +709,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
@@ -804,7 +804,7 @@ class TestTranscriptionService:
     @patch('requests.put')
     @patch('os.path.getsize')
     @patch('subprocess.run')
-    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('transcription.whisper_service.WhisperService._load_model')
     @patch('requests.post')
     @patch('os.path.exists')
     @patch('transcription_progress.detect_transcription_progress')
