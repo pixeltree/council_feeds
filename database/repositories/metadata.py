@@ -10,7 +10,7 @@ from database.connection import get_db_connection
 logger = logging.getLogger(__name__)
 
 
-def set_metadata(key: str, value: str):
+def set_metadata(key: str, value: str) -> None:
     """Set a metadata value.
 
     Args:

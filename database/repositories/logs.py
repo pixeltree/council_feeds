@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from config import CALGARY_TZ
 from database.connection import get_db_connection
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def log_stream_status(stream_url: str, status: str, meeting_id: Optional[int] = None,
-                     details: Optional[str] = None):
+                     details: Optional[str] = None) -> None:
     """Log stream status change.
 
     Args:
@@ -35,7 +35,7 @@ def log_stream_status(stream_url: str, status: str, meeting_id: Optional[int] = 
         ))
 
 
-def add_recording_log(recording_id: int, message: str, level: str = 'info'):
+def add_recording_log(recording_id: int, message: str, level: str = 'info') -> None:
     """Add a log message to the recording logs.
 
     Args:
@@ -53,7 +53,7 @@ def add_recording_log(recording_id: int, message: str, level: str = 'info'):
         """, (recording_id, now, level, message))
 
 
-def get_recording_logs(recording_id: int, limit: int = 100) -> List[Dict]:
+def get_recording_logs(recording_id: int, limit: int = 100) -> List[Dict[str, Any]]:
     """Get log messages for a recording in reverse chronological order.
 
     Args:

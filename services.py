@@ -11,7 +11,11 @@ import re
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
 from bs4 import BeautifulSoup
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from transcription_service import TranscriptionService
+    from post_processor import PostProcessor
 
 import database as db
 from exceptions import RecordingStorageError
@@ -52,7 +56,7 @@ import os
 class CalendarService:
     """Service for fetching and managing council meeting calendar."""
 
-    def __init__(self, api_url: str = COUNCIL_CALENDAR_API, timezone=CALGARY_TZ):
+    def __init__(self, api_url: str = COUNCIL_CALENDAR_API, timezone: Any = CALGARY_TZ):
         self.api_url = api_url
         self.timezone = timezone
         self.logger = logging.getLogger(__name__)
@@ -153,7 +157,7 @@ class MeetingScheduler:
         self,
         buffer_before: timedelta = MEETING_BUFFER_BEFORE,
         buffer_after: timedelta = MEETING_BUFFER_AFTER,
-        timezone=CALGARY_TZ
+        timezone: Any = CALGARY_TZ
     ):
         self.buffer_before = buffer_before
         self.buffer_after = buffer_after
@@ -190,7 +194,7 @@ class StreamService:
     def __init__(
         self,
         stream_page_url: str = STREAM_PAGE_URL,
-        stream_url_patterns: List[str] = None,
+        stream_url_patterns: Optional[List[str]] = None,
         ytdlp_command: str = YTDLP_COMMAND
     ):
         self.stream_page_url = stream_page_url
@@ -255,7 +259,7 @@ class StreamService:
             matches = m3u8_pattern.findall(response.text)
 
             if matches:
-                return matches[0]
+                return str(matches[0])
 
             # Alternative: parse for video source tags
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -264,9 +268,9 @@ class StreamService:
                 src = tag.get('src', '')
                 if '.m3u8' in src:
                     if src.startswith('http'):
-                        return src
+                        return str(src)
                     elif src.startswith('//'):
-                        return 'https:' + src
+                        return 'https:' + str(src)
 
             return None
         except Exception as e:
@@ -297,10 +301,10 @@ class RecordingService:
         self,
         output_dir: str = OUTPUT_DIR,
         ffmpeg_command: str = FFMPEG_COMMAND,
-        timezone=CALGARY_TZ,
+        timezone: Any = CALGARY_TZ,
         stream_service: Optional[StreamService] = None,
-        transcription_service: Optional['TranscriptionService'] = None,
-        post_processor: Optional['PostProcessor'] = None
+        transcription_service: Optional["TranscriptionService"] = None,
+        post_processor: Optional["PostProcessor"] = None
     ):
         self.output_dir = output_dir
         self.ffmpeg_command = ffmpeg_command
@@ -308,8 +312,8 @@ class RecordingService:
         self.stream_service = stream_service or StreamService()
         self.transcription_service = transcription_service
         self.post_processor = post_processor
-        self.current_process = None
-        self.current_recording_id = None
+        self.current_process: Optional[subprocess.Popen[bytes]] = None
+        self.current_recording_id: Optional[int] = None
         self.stop_requested = False
         self.logger = logging.getLogger(__name__)
 
@@ -342,7 +346,7 @@ class RecordingService:
 
         return output_file, output_pattern, format_ext
 
-    def _find_meeting_id(self, current_meeting: Optional[Dict]) -> Optional[int]:
+    def _find_meeting_id(self, current_meeting: Optional[Dict[str, Any]]) -> Optional[int]:
         """Find associated meeting ID in database.
 
         Args:
@@ -357,7 +361,7 @@ class RecordingService:
         db_meeting = db.find_meeting_by_datetime(current_meeting['datetime'])
         if db_meeting:
             self.logger.info(f"Associated with meeting: {db_meeting['title']}")
-            return db_meeting['id']
+            return int(db_meeting['id'])
         return None
 
     def _create_recording_record(
@@ -378,7 +382,10 @@ class RecordingService:
         Returns:
             Recording ID
         """
-        recording_id = db.create_recording(meeting_id, output_file, stream_url, start_time)
+        recording_id_result = db.create_recording(meeting_id, output_file, stream_url, start_time)
+        if recording_id_result is None:
+            raise RecordingStorageError(output_file, 'create', 'Failed to create recording in database')
+        recording_id = int(recording_id_result)
         self.current_recording_id = recording_id
         self.stop_requested = False
         db.log_stream_status(stream_url, 'live', meeting_id, 'Recording started')
@@ -412,6 +419,8 @@ class RecordingService:
                 '-reconnect_delay_max', '5'
             ])
 
+        if not stream_url:
+            raise ValueError("stream_url cannot be empty")
         cmd.extend(['-i', stream_url])
 
         # Copy streams without re-encoding
@@ -424,6 +433,8 @@ class RecordingService:
         # Add format-specific options
         if ENABLE_SEGMENTED_RECORDING:
             # Segmented recording for resilience
+            if not output_pattern:
+                raise ValueError("output_pattern is required when ENABLE_SEGMENTED_RECORDING is True")
             cmd.extend([
                 '-f', 'segment',
                 '-segment_time', str(SEGMENT_DURATION),

@@ -1,13 +1,14 @@
 """Database schema migrations."""
 
 import logging
+import sqlite3
 
 from database.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
 
-def init_database():
+def init_database() -> None:
     """Initialize the database schema and run all migrations."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -144,7 +145,7 @@ def init_database():
         _migrate_add_transcription_steps_columns(cursor)
 
 
-def _migrate_add_room_column(cursor):
+def _migrate_add_room_column(cursor: sqlite3.Cursor) -> None:
     """Migration: Add room column to meetings table if it doesn't exist."""
     cursor.execute("PRAGMA table_info(meetings)")
     columns = [column[1] for column in cursor.fetchall()]
@@ -153,7 +154,7 @@ def _migrate_add_room_column(cursor):
         cursor.execute("ALTER TABLE meetings ADD COLUMN room TEXT")
 
 
-def _migrate_add_post_processing_columns(cursor):
+def _migrate_add_post_processing_columns(cursor: sqlite3.Cursor) -> None:
     """Migration: Add post-processing tracking columns to recordings table."""
     cursor.execute("PRAGMA table_info(recordings)")
     columns = [column[1] for column in cursor.fetchall()]
@@ -167,7 +168,7 @@ def _migrate_add_post_processing_columns(cursor):
         cursor.execute("ALTER TABLE recordings ADD COLUMN post_process_error TEXT")
 
 
-def _migrate_add_transcription_columns(cursor):
+def _migrate_add_transcription_columns(cursor: sqlite3.Cursor) -> None:
     """Migration: Add transcription tracking columns to recordings table."""
     cursor.execute("PRAGMA table_info(recordings)")
     columns = [column[1] for column in cursor.fetchall()]
@@ -185,7 +186,7 @@ def _migrate_add_transcription_columns(cursor):
         cursor.execute("ALTER TABLE recordings ADD COLUMN transcription_logs TEXT")
 
 
-def _migrate_add_diarization_columns(cursor):
+def _migrate_add_diarization_columns(cursor: sqlite3.Cursor) -> None:
     """Migration: Add diarization file path columns to recordings table."""
     cursor.execute("PRAGMA table_info(recordings)")
     columns = [column[1] for column in cursor.fetchall()]
@@ -197,7 +198,7 @@ def _migrate_add_diarization_columns(cursor):
         cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_gemini_path TEXT")
 
 
-def _migrate_add_speakers_column(cursor):
+def _migrate_add_speakers_column(cursor: sqlite3.Cursor) -> None:
     """Migration: Add speaker list column to recordings table."""
     cursor.execute("PRAGMA table_info(recordings)")
     columns = [column[1] for column in cursor.fetchall()]
@@ -207,7 +208,7 @@ def _migrate_add_speakers_column(cursor):
         cursor.execute("ALTER TABLE recordings ADD COLUMN speakers TEXT")
 
 
-def _migrate_add_transcription_steps_columns(cursor):
+def _migrate_add_transcription_steps_columns(cursor: sqlite3.Cursor) -> None:
     """Migration: Add step-level transcription tracking columns."""
     cursor.execute("PRAGMA table_info(recordings)")
     columns = [column[1] for column in cursor.fetchall()]

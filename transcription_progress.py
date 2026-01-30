@@ -9,12 +9,12 @@ since the files are the source of truth.
 
 import os
 import logging
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple, Any
 
 logger = logging.getLogger(__name__)
 
 
-def detect_transcription_progress(video_path: str) -> Dict:
+def detect_transcription_progress(video_path: str) -> Dict[str, Dict[str, Any]]:
     """
     Detect transcription progress by checking for output files.
 
@@ -86,7 +86,7 @@ def detect_transcription_progress(video_path: str) -> Dict:
     return steps
 
 
-def get_overall_status(steps: Dict) -> str:
+def get_overall_status(steps: Dict[str, Dict[str, Any]]) -> str:
     """
     Determine overall transcription status from step status.
 
@@ -111,7 +111,7 @@ def get_overall_status(steps: Dict) -> str:
     return 'pending'
 
 
-def get_next_step(steps: Dict) -> Optional[str]:
+def get_next_step(steps: Dict[str, Dict[str, Any]]) -> Optional[str]:
     """
     Get the next step that needs to be processed.
 
@@ -259,7 +259,7 @@ def reset_step(video_path: str, step_name: str) -> bool:
         return False
 
 
-def get_dependent_steps(step_name: str) -> list:
+def get_dependent_steps(step_name: str) -> List[str]:
     """
     Get list of steps that depend on the given step.
 
@@ -272,7 +272,7 @@ def get_dependent_steps(step_name: str) -> list:
     Returns:
         List of dependent step names
     """
-    dependencies = {
+    dependencies: Dict[str, List[str]] = {
         'extraction': ['whisper', 'diarization', 'gemini', 'merge'],
         'whisper': ['merge'],
         'diarization': ['gemini', 'merge'],
@@ -283,7 +283,7 @@ def get_dependent_steps(step_name: str) -> list:
     return dependencies.get(step_name, [])
 
 
-def get_step_dependencies(step_name: str) -> list:
+def get_step_dependencies(step_name: str) -> List[str]:
     """
     Get list of steps that this step depends on (prerequisites).
 
@@ -295,7 +295,7 @@ def get_step_dependencies(step_name: str) -> list:
     Returns:
         List of prerequisite step names
     """
-    prerequisites = {
+    prerequisites: Dict[str, List[str]] = {
         'extraction': [],  # No dependencies
         'whisper': ['extraction'],  # Needs WAV file
         'diarization': ['extraction'],  # Needs WAV file
@@ -306,7 +306,7 @@ def get_step_dependencies(step_name: str) -> list:
     return prerequisites.get(step_name, [])
 
 
-def can_run_step(video_path: str, step_name: str) -> tuple:
+def can_run_step(video_path: str, step_name: str) -> Tuple[bool, str]:
     """
     Check if a step can be run based on its dependencies.
 

@@ -122,8 +122,8 @@ def refine_diarization(
             logger.warning("response.text not available, checking candidates")
             if hasattr(response, 'candidates') and response.candidates:
                 candidate = response.candidates[0]
-                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                    if candidate.content.parts:
+                if hasattr(candidate, 'content') and candidate.content is not None:
+                    if hasattr(candidate.content, 'parts') and candidate.content.parts:
                         response_text = candidate.content.parts[0].text
 
         if not response_text:
@@ -299,9 +299,10 @@ def _extract_json_from_response(response_text: str) -> Optional[Dict]:
 
     Gemini sometimes wraps JSON in markdown code blocks, so we need to handle that.
     """
+    from typing import cast
     try:
         # Try parsing directly first
-        return json.loads(response_text)
+        return cast(Dict, json.loads(response_text))
     except json.JSONDecodeError:
         # Try extracting from markdown code block
         import re
@@ -312,7 +313,7 @@ def _extract_json_from_response(response_text: str) -> Optional[Dict]:
 
         if match:
             try:
-                return json.loads(match.group(1))
+                return cast(Dict, json.loads(match.group(1)))
             except json.JSONDecodeError:
                 pass
 
@@ -322,7 +323,7 @@ def _extract_json_from_response(response_text: str) -> Optional[Dict]:
 
         if match:
             try:
-                return json.loads(match.group(0))
+                return cast(Dict, json.loads(match.group(0)))
             except json.JSONDecodeError:
                 pass
 

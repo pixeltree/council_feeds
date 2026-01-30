@@ -21,11 +21,13 @@ Exception Hierarchy:
         └── DatabaseQueryError
 """
 
+from typing import Optional
+
 
 class CouncilRecorderError(Exception):
     """Base exception for all Council Recorder errors."""
 
-    def __init__(self, message: str, details: str = None):
+    def __init__(self, message: str, details: Optional[str] = None):
         """Initialize the exception with a message and optional details.
 
         Args:
@@ -58,7 +60,7 @@ class StreamError(CouncilRecorderError):
 class StreamNotAvailableError(StreamError):
     """Raised when a stream is not available or accessible."""
 
-    def __init__(self, stream_url: str, reason: str = None):
+    def __init__(self, stream_url: str, reason: Optional[str] = None):
         """Initialize with stream URL and optional reason.
 
         Args:
@@ -73,7 +75,7 @@ class StreamNotAvailableError(StreamError):
 class StreamConnectionError(StreamError):
     """Raised when unable to connect to a stream."""
 
-    def __init__(self, stream_url: str, error: str = None):
+    def __init__(self, stream_url: str, error: Optional[str] = None):
         """Initialize with stream URL and optional error details.
 
         Args:
@@ -94,7 +96,7 @@ class RecordingError(CouncilRecorderError):
 class RecordingProcessError(RecordingError):
     """Raised when the recording process encounters an error."""
 
-    def __init__(self, recording_id: int = None, error: str = None):
+    def __init__(self, recording_id: Optional[int] = None, error: Optional[str] = None):
         """Initialize with optional recording ID and error details.
 
         Args:
@@ -111,7 +113,7 @@ class RecordingProcessError(RecordingError):
 class RecordingStorageError(RecordingError):
     """Raised when unable to store or access recording files."""
 
-    def __init__(self, file_path: str, operation: str, error: str = None):
+    def __init__(self, file_path: str, operation: str, error: Optional[str] = None):
         """Initialize with file path, operation, and optional error.
 
         Args:
@@ -134,7 +136,7 @@ class TranscriptionError(CouncilRecorderError):
 class WhisperError(TranscriptionError):
     """Raised when Whisper transcription fails."""
 
-    def __init__(self, file_path: str = None, error: str = None):
+    def __init__(self, file_path: Optional[str] = None, error: Optional[str] = None):
         """Initialize with optional file path and error details.
 
         Args:
@@ -151,7 +153,7 @@ class WhisperError(TranscriptionError):
 class DiarizationError(TranscriptionError):
     """Raised when speaker diarization fails."""
 
-    def __init__(self, file_path: str = None, error: str = None):
+    def __init__(self, file_path: Optional[str] = None, error: Optional[str] = None):
         """Initialize with optional file path and error details.
 
         Args:
@@ -168,7 +170,7 @@ class DiarizationError(TranscriptionError):
 class GeminiError(TranscriptionError):
     """Raised when Gemini AI processing fails."""
 
-    def __init__(self, operation: str = None, error: str = None):
+    def __init__(self, operation: Optional[str] = None, error: Optional[str] = None):
         """Initialize with optional operation and error details.
 
         Args:
@@ -191,7 +193,7 @@ class DatabaseError(CouncilRecorderError):
 class DatabaseConnectionError(DatabaseError):
     """Raised when unable to connect to the database."""
 
-    def __init__(self, db_path: str = None, error: str = None):
+    def __init__(self, db_path: Optional[str] = None, error: Optional[str] = None):
         """Initialize with optional database path and error details.
 
         Args:
@@ -208,7 +210,7 @@ class DatabaseConnectionError(DatabaseError):
 class DatabaseQueryError(DatabaseError):
     """Raised when a database query fails."""
 
-    def __init__(self, query: str = None, error: str = None):
+    def __init__(self, query: Optional[str] = None, error: Optional[str] = None):
         """Initialize with optional query and error details.
 
         Args:

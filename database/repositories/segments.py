@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from config import CALGARY_TZ
 from database.connection import get_db_connection
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def create_segment(recording_id: int, segment_number: int, file_path: str,
                   start_time: float, end_time: float, duration: float,
-                  file_size_bytes: Optional[int] = None) -> int:
+                  file_size_bytes: Optional[int] = None) -> Optional[int]:
     """Create a new segment record and return its ID.
 
     Args:
@@ -51,7 +51,7 @@ def create_segment(recording_id: int, segment_number: int, file_path: str,
         return cursor.lastrowid
 
 
-def get_segments_by_recording(recording_id: int) -> List[Dict]:
+def get_segments_by_recording(recording_id: int) -> List[Dict[str, Any]]:
     """Get all segments for a recording.
 
     Args:
@@ -100,7 +100,7 @@ def get_segments_by_recording(recording_id: int) -> List[Dict]:
         return segments
 
 
-def update_segment_transcript(segment_id: int, transcript_path: str):
+def update_segment_transcript(segment_id: int, transcript_path: str) -> None:
     """Update segment with transcript file path.
 
     Args:

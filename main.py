@@ -73,14 +73,14 @@ recording_service = RecordingService(
     post_processor=post_processor
 )
 
-def daily_calendar_refresh():
+def daily_calendar_refresh() -> None:
     """Scheduled task: Refresh calendar at midnight."""
     logger = logging.getLogger(__name__)
     now = datetime.now(CALGARY_TZ)
     logger.info(f"\n[{now.strftime('%H:%M:%S')}] SCHEDULED TASK: Daily calendar refresh at midnight")
     calendar_refresh_state.request()
 
-def run_scheduler():
+def run_scheduler() -> None:
     """Run the scheduler in a separate thread."""
     logger = logging.getLogger(__name__)
     # Schedule daily calendar refresh at midnight Calgary time
@@ -92,7 +92,7 @@ def run_scheduler():
         schedule.run_pending()
         time.sleep(60)  # Check every minute
 
-def main():
+def main() -> None:
     """Main monitoring loop with smart scheduling."""
     # Initialize logging first
     log_level = os.environ.get('LOG_LEVEL', 'INFO')
@@ -195,7 +195,7 @@ def main():
             in_window, current_meeting = meeting_scheduler.is_within_meeting_window(current_time, meetings)
 
             # Log mode changes
-            if in_window and not active_mode:
+            if in_window and not active_mode and current_meeting is not None:
                 logger.info(f"\n{'='*70}")
                 logger.info(f"ACTIVE MODE: Meeting window detected!")
                 logger.info(f"   Meeting: {current_meeting['title']}")

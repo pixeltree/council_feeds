@@ -37,7 +37,7 @@ def parse_datetime_from_db(dt_str: str) -> datetime:
 class Database:
     """Database wrapper class for improved testability."""
 
-    def __init__(self, db_path: str = DB_PATH, db_dir: str = DB_DIR):
+    def __init__(self, db_path: str = DB_PATH, db_dir: str = DB_DIR) -> None:
         """Initialize database connection manager.
 
         Args:
@@ -47,7 +47,7 @@ class Database:
         self.db_path = db_path
         self.db_dir = db_dir
 
-    def ensure_db_directory(self):
+    def ensure_db_directory(self) -> None:
         """Ensure the database directory exists."""
         os.makedirs(self.db_dir, exist_ok=True)
 
@@ -81,7 +81,7 @@ class Database:
             conn.close()
 
 
-def ensure_db_directory():
+def ensure_db_directory() -> None:
     """Ensure the database directory exists."""
     # Import here to get the potentially-monkeypatched value
     import database
