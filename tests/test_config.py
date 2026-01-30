@@ -8,8 +8,6 @@ validation at startup.
 
 import os
 import pytest
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 from config import AppConfig, validate_config, CALGARY_TZ
 
@@ -140,7 +138,7 @@ class TestAppConfigValidation:
             import config as config_module
             reload(config_module)
 
-            config = config_module.validate_config()
+            config_module.validate_config()
             assert new_dir.exists()
             assert new_dir.is_dir()
 
@@ -347,6 +345,20 @@ class TestAppConfigValidation:
             reload(config_module)
 
             with pytest.raises(ValueError, match="STATIC_MAX_FAILURES must be positive"):
+                config_module.validate_config()
+
+        # Test negative scene threshold
+        with patch.dict(os.environ, {
+            "ENABLE_STATIC_DETECTION": "true",
+            "STATIC_SCENE_THRESHOLD": "-1",
+            "OUTPUT_DIR": str(tmp_path / "output"),
+            "DB_DIR": str(tmp_path / "db")
+        }):
+            from importlib import reload
+            import config as config_module
+            reload(config_module)
+
+            with pytest.raises(ValueError, match="STATIC_SCENE_THRESHOLD must be non-negative"):
                 config_module.validate_config()
 
     def test_max_retries_must_be_non_negative(self, tmp_path):

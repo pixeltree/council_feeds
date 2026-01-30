@@ -76,7 +76,7 @@ def main():
 
     # Validate configuration at startup (fail fast if misconfigured)
     try:
-        app_config = validate_config()
+        validate_config()
         logger.info("Configuration validated successfully")
     except ValueError as e:
         logger.error(f"Configuration validation failed: {e}")

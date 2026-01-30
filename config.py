@@ -8,7 +8,7 @@ import os
 import logging
 import pytz
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict
+from typing import Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
