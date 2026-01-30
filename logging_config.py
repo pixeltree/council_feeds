@@ -10,7 +10,6 @@ This module provides consistent logging setup with:
 
 import logging
 import logging.handlers
-import os
 from pathlib import Path
 from typing import Optional
 

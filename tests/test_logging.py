@@ -3,10 +3,7 @@ Tests for logging configuration.
 """
 
 import logging
-import os
-import tempfile
 from pathlib import Path
-import pytest
 
 from logging_config import setup_logging, get_logger
 
@@ -49,7 +46,6 @@ class TestLoggingSetup:
 
         root_logger = logging.getLogger()
         # Should have only file handler (no console handler)
-        stream_handlers = [h for h in root_logger.handlers if isinstance(h, logging.StreamHandler)]
         # Note: RotatingFileHandler is a subclass of StreamHandler, so we need to be more specific
         from logging.handlers import RotatingFileHandler
         console_handlers = [h for h in root_logger.handlers

@@ -46,7 +46,6 @@ class TranscriptionService:
         else:
             self.device = device
 
-        self.logger.info(f"Using device for Whisper: {self.device}")
         self._last_recording_id = None  # Track last recording ID for logging
 
         # Lazy load Whisper model (only when needed)
@@ -55,6 +54,7 @@ class TranscriptionService:
     def _load_whisper_model(self):
         """Lazy load Whisper model."""
         if self._whisper_model is None:
+            self.logger.info(f"Using device for Whisper: {self.device}")
             self.logger.info(f"Loading Whisper model '{self.whisper_model_name}'...")
             # faster-whisper uses compute_type instead of device parameter
             compute_type = "int8" if self.device == "cpu" else "float16"
