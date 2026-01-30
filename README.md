@@ -234,10 +234,12 @@ environment:
 3. Creates organized folder structure:
    ```
    recordings/
-   └── council_meeting_20260127_140000_segments/
-       ├── council_meeting_20260127_140000_original.mp4  # Original preserved
-       ├── council_meeting_20260127_140000_segment_1.mp4  # Before break
-       └── council_meeting_20260127_140000_segment_2.mp4  # After break
+   └── council_meeting_20260127_140000/
+       ├── council_meeting_20260127_140000.mp4
+       └── council_meeting_20260127_140000_segments/
+           ├── council_meeting_20260127_140000_original.mp4  # Original preserved
+           ├── council_meeting_20260127_140000_segment_1.mp4  # Before break
+           └── council_meeting_20260127_140000_segment_2.mp4  # After break
    ```
 
 **Performance:**
@@ -247,7 +249,7 @@ environment:
 
 **Manual testing:**
 ```bash
-python post_processor.py ./recordings/council_meeting_20260127_140000.mp4
+python post_processor.py ./recordings/council_meeting_20260127_140000/council_meeting_20260127_140000.mp4
 ```
 
 **Note:** This is an experimental feature, disabled by default. Original recordings are always preserved.
@@ -271,9 +273,10 @@ environment:
 4. Saves both JSON and formatted text versions:
    ```
    recordings/
-   ├── council_meeting_20260127_140000.mp4
-   ├── council_meeting_20260127_140000.mp4.transcript.json  # Detailed JSON with timestamps
-   └── council_meeting_20260127_140000.mp4.transcript.txt   # Readable text format
+   └── council_meeting_20260127_140000/
+       ├── council_meeting_20260127_140000.mp4
+       ├── council_meeting_20260127_140000.mp4.transcript.json  # Detailed JSON with timestamps
+       └── council_meeting_20260127_140000.mp4.transcript.txt   # Readable text format
    ```
 
 **Setup:**
@@ -300,7 +303,7 @@ Thank you. I'd like to begin by...
 python -c "
 from transcription_service import TranscriptionService
 ts = TranscriptionService(whisper_model='base', hf_token='your_token')
-ts.transcribe_with_speakers('./recordings/council_meeting_20260127_140000.mp4')
+ts.transcribe_with_speakers('./recordings/council_meeting_20260127_140000/council_meeting_20260127_140000.mp4')
 "
 ```
 
@@ -395,12 +398,16 @@ sqlite3 ./data/council_feeds.db "SELECT * FROM recordings ORDER BY start_time DE
 
 ## Output Format
 
-Recordings are saved as MP4 files with timestamps:
+Recordings are organized in subfolders by timestamp:
 ```
-council_meeting_YYYYMMDD_HHMMSS.mp4
+recordings/
+└── council_meeting_YYYYMMDD_HHMMSS/
+    ├── council_meeting_YYYYMMDD_HHMMSS.mp4
+    ├── council_meeting_YYYYMMDD_HHMMSS.mp4.transcript.json
+    └── ... (other related files)
 ```
 
-Example: `council_meeting_20260127_143022.mp4`
+Example: `recordings/council_meeting_20260127_143022/council_meeting_20260127_143022.mp4`
 
 ## Troubleshooting
 
