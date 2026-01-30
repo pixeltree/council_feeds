@@ -9,7 +9,7 @@ from flask import Flask, render_template, jsonify, send_file, request, Response
 import database as db
 from datetime import datetime
 from typing import Dict, List, Optional, Union, Tuple, Any
-from config import CALGARY_TZ, WEB_HOST, WEB_PORT
+from config import CALGARY_TZ, WEB_HOST, WEB_PORT, OUTPUT_DIR
 import os
 from post_processor import PostProcessor
 import threading
@@ -20,6 +20,7 @@ from exceptions import (
     TranscriptionError,
     DatabaseError
 )
+from services.vod_service import VodService
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -639,6 +640,176 @@ def api_cleanup_stale_recordings() -> Response:
         'failed_count': failed_count,
         'deleted_ids': deleted_ids,
         'message': f'Deleted {deleted_count} stale recording(s)'
+    })
+
+
+@app.route('/api/recordings/import-vod', methods=['POST'])
+def import_vod() -> Union[Response, Tuple[Response, int]]:
+    """Import a video from a past council meeting (VOD).
+
+    Request body:
+        {
+            "escriba_url": "https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=...",
+            "override_title": "Optional custom title",
+            "override_date": "Optional custom date (ISO format)"
+        }
+
+    Returns:
+        {
+            "success": true/false,
+            "recording_id": int,
+            "meeting_title": str,
+            "message": str
+        }
+    """
+    # Validate request has JSON body
+    if not request.is_json:
+        return jsonify({
+            'success': False,
+            'message': 'Request must be JSON'
+        }), 400
+
+    data = request.get_json()
+
+    # Validate required fields
+    escriba_url = data.get('escriba_url')
+    if not escriba_url:
+        return jsonify({
+            'success': False,
+            'message': 'escriba_url is required'
+        }), 400
+
+    # Get optional overrides
+    override_title = data.get('override_title')
+    override_date = data.get('override_date')
+
+    # Parse override_date if provided
+    override_datetime = None
+    if override_date:
+        try:
+            override_datetime = datetime.fromisoformat(override_date.replace('Z', '+00:00'))
+            # Convert to Calgary timezone if not already timezone-aware
+            if override_datetime.tzinfo is None:
+                override_datetime = CALGARY_TZ.localize(override_datetime)
+            else:
+                override_datetime = override_datetime.astimezone(CALGARY_TZ)
+        except (ValueError, AttributeError) as e:
+            return jsonify({
+                'success': False,
+                'message': f'Invalid date format. Use ISO format (e.g., 2024-04-22T11:08:00): {str(e)}'
+            }), 400
+
+    # Initialize VOD service
+    vod_service = VodService()
+
+    # Validate URL
+    if not vod_service.validate_escriba_url(escriba_url):
+        return jsonify({
+            'success': False,
+            'message': 'Invalid Escriba URL. Must be from pub-calgary.escribemeetings.com'
+        }), 400
+
+    # Extract meeting information
+    try:
+        meeting_info = vod_service.extract_meeting_info(escriba_url)
+    except Exception as e:
+        logger.error(f"Failed to extract meeting info from {escriba_url}: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Failed to extract meeting information: {str(e)}'
+        }), 500
+
+    # Convert timestamp from integer to string format for folder naming
+    timestamp_str = datetime.fromtimestamp(meeting_info['timestamp'], tz=CALGARY_TZ).strftime('%Y-%m-%d_%H-%M')
+
+    # Apply overrides if provided
+    if override_title:
+        meeting_info['title'] = override_title
+    if override_datetime:
+        meeting_info['datetime'] = override_datetime
+        # Update timestamp to match new datetime
+        timestamp_str = override_datetime.strftime('%Y-%m-%d_%H-%M')
+
+    # Add raw_date field required by save_meetings
+    meeting_info['raw_date'] = meeting_info['datetime'].strftime('%Y-%m-%d %H:%M:%S')
+
+    # Save meeting to database
+    try:
+        db.save_meetings([meeting_info])
+        # Retrieve the meeting ID by finding the meeting we just saved
+        saved_meeting = db.find_meeting_by_datetime(meeting_info['datetime'])
+        if not saved_meeting:
+            raise Exception("Failed to retrieve saved meeting from database")
+        meeting_id = saved_meeting['id']
+    except Exception as e:
+        logger.error(f"Failed to save meeting to database: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Database error: {str(e)}'
+        }), 500
+
+    # Create output path
+    output_path = os.path.join(OUTPUT_DIR, timestamp_str, 'recording.mkv')
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Create recording record with 'downloading' status
+    try:
+        recording_id = db.create_recording(
+            meeting_id=meeting_id,
+            file_path=output_path,
+            stream_url=escriba_url,
+            start_time=meeting_info['datetime']
+        )
+
+        # Update status to 'downloading' (create_recording sets it to 'recording')
+        db.update_recording(
+            recording_id,
+            meeting_info['datetime'],  # Use same time as end_time for now
+            'downloading'
+        )
+    except Exception as e:
+        logger.error(f"Failed to create recording record: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'message': f'Database error: {str(e)}'
+        }), 500
+
+    # Download video in background thread
+    def download_video() -> None:
+        """Background task to download the video."""
+        try:
+            logger.info(f"Starting VOD download for recording {recording_id} from {escriba_url}")
+
+            # Download the video
+            vod_service.download_vod(escriba_url, output_path)
+
+            # Update recording to completed (file size and duration are calculated by update_recording)
+            db.update_recording(
+                recording_id,
+                datetime.now(CALGARY_TZ),
+                'completed'
+            )
+
+            logger.info(f"VOD download completed for recording {recording_id}")
+
+        except Exception as e:
+            logger.error(f"VOD download failed for recording {recording_id}: {e}", exc_info=True)
+            db.update_recording(
+                recording_id,
+                datetime.now(CALGARY_TZ),
+                'failed',
+                error_message=str(e)
+            )
+
+    # Start background download thread
+    thread = threading.Thread(target=download_video, daemon=True)
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'recording_id': recording_id,
+        'meeting_title': meeting_info['title'],
+        'message': 'Video download started'
     })
 
 
