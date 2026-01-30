@@ -9,7 +9,7 @@ This is the main entry point that delegates to modular components in the transcr
 import os
 import json
 import logging
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 from exceptions import WhisperError
 
@@ -289,7 +289,7 @@ class TranscriptionService:
 
             self.logger.info("Running Whisper and Diarization in parallel...")
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=2) as executor:
                 # Submit tasks
                 futures = {}
 
@@ -311,37 +311,42 @@ class TranscriptionService:
                     )
                     futures['diarization'] = diarization_future
 
-                # Wait for results
+                # Wait for results and save immediately for resumability
+                # Note: Both results are saved immediately after completion to ensure
+                # that if one task fails, the other can be resumed without re-execution
                 if 'whisper' in futures:
                     transcription = futures['whisper'].result()
-
-                    # Save Whisper output to intermediate file for resumability
-                    whisper_output_path = video_path + '.whisper.json'
-                    with open(whisper_output_path, 'w', encoding='utf-8') as f:
-                        json.dump({
-                            'language': transcription.get('language', 'en'),
-                            'full_text': transcription['text'],
-                            'segments': transcription['segments']
-                        }, f, indent=2, ensure_ascii=False)
-                    self.logger.info(f"Whisper output saved: {whisper_output_path}")
 
                 if 'diarization' in futures:
                     diarization_segments = futures['diarization'].result()
 
+        # Save intermediate results to disk for resumability
+        # This is done outside the executor block to ensure consistent save patterns
+        if transcription and not whisper_already_done and save_to_file:
+            whisper_output_path = video_path + '.whisper.json'
+            with open(whisper_output_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'language': transcription.get('language', 'en'),
+                    'full_text': transcription['text'],
+                    'segments': transcription['segments']
+                }, f, indent=2, ensure_ascii=False)
+            self.logger.info(f"Whisper output saved: {whisper_output_path}")
+
         # Create pyannote diarization JSON structure (only if not loaded from file)
-        if pyannote_diarization is None:
+        if pyannote_diarization is None and diarization_segments:
             pyannote_diarization = {
                 'file': video_path,
                 'segments': diarization_segments,
                 'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
             }
 
-            # Save pyannote diarization data (original output from pyannote API)
-            if save_to_file:
-                pyannote_path = video_path + '.diarization.pyannote.json'
-                with open(pyannote_path, 'w', encoding='utf-8') as f:
-                    json.dump(pyannote_diarization, f, indent=2, ensure_ascii=False)
-                self.logger.info(f"Pyannote diarization saved: {pyannote_path}")
+        # Save pyannote diarization data (original output from pyannote API)
+        # Saved alongside Whisper output for consistent resumability pattern
+        if pyannote_diarization and not diarization_already_done and save_to_file:
+            pyannote_path = video_path + '.diarization.pyannote.json'
+            with open(pyannote_path, 'w', encoding='utf-8') as f:
+                json.dump(pyannote_diarization, f, indent=2, ensure_ascii=False)
+            self.logger.info(f"Pyannote diarization saved: {pyannote_path}")
 
         # Step 3: Merge transcription with diarization (before Gemini)
         if recording_id:
