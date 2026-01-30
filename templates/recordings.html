@@ -77,64 +77,31 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <div class="flex flex-wrap gap-2 items-center">
+                        <div class="inline-flex items-center gap-2">
+                            <!-- Primary status badge -->
                             <span class="px-3 py-1 rounded-full text-xs font-semibold
                                 {% if recording.status == 'completed' %}bg-green-100 text-green-700
                                 {% elif recording.status == 'failed' %}bg-red-100 text-red-700
                                 {% else %}bg-orange-100 text-orange-700{% endif %}">
-                                {{ recording.status.upper() }}
+                                {% if recording.status == 'completed' %}✓{% elif recording.status == 'failed' %}✕{% else %}⏳{% endif %}
+                                {{ recording.status.title() }}
                             </span>
 
-                            <!-- Post-processing status badge -->
+                            <!-- Secondary status indicators (subtle) -->
                             {% if recording.status == 'completed' %}
                                 {% set pp_status = recording.post_process_status or 'pending' %}
-                                <span class="px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1
-                                    {% if pp_status == 'completed' %}bg-blue-100 text-blue-700
-                                    {% elif pp_status == 'processing' %}bg-yellow-100 text-yellow-700
-                                    {% elif pp_status == 'failed' %}bg-red-100 text-red-700
-                                    {% else %}bg-gray-100 text-gray-600{% endif %}"
-                                    {% if recording.post_process_error %}title="Error: {{ recording.post_process_error }}"{% endif %}>
-                                    {% if pp_status == 'completed' %}
-                                        <span class="w-2 h-2 rounded-full bg-blue-500"></span>
-                                        <span>Segmented</span>
-                                    {% elif pp_status == 'processing' %}
-                                        <span class="loading"></span>
-                                        <span>Segmenting...</span>
-                                    {% elif pp_status == 'failed' %}
-                                        <span>⚠️</span>
-                                        <span>Segment failed</span>
-                                    {% else %}
-                                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                                        <span>Not segmented</span>
-                                    {% endif %}
+                                {% set trans_status = recording.transcription_status or 'pending' %}
+                                <span class="text-xs text-gray-600">
+                                    {% if pp_status == 'completed' %}• Segmented{% endif %}
+                                    {% if trans_status == 'completed' %} • Transcribed{% endif %}
                                 </span>
 
-                                <!-- Transcription status badge -->
-                                {% set trans_status = recording.transcription_status or 'pending' %}
-                                <span class="px-3 py-1 rounded-full text-xs font-semibold inline-flex items-center gap-1
-                                    {% if trans_status == 'completed' %}bg-green-100 text-green-700
-                                    {% elif trans_status == 'processing' %}bg-yellow-100 text-yellow-700
-                                    {% elif trans_status == 'failed' %}bg-red-100 text-red-700
-                                    {% else %}bg-gray-100 text-gray-600{% endif %}"
-                                    {% if recording.transcription_error %}title="Error: {{ recording.transcription_error }}"{% endif %}
-                                    id="trans-status-{{ recording.id }}">
-                                    {% if trans_status == 'completed' %}
-                                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                                        <span>Transcribed</span>
-                                    {% elif trans_status == 'processing' %}
+                                <!-- Show processing status if actively processing -->
+                                {% if trans_status == 'processing' %}
+                                    <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700 inline-flex items-center gap-1" id="trans-status-{{ recording.id }}">
                                         <span class="loading"></span>
                                         <span class="trans-status-text">Transcribing...</span>
-                                    {% elif trans_status == 'failed' %}
-                                        <span>⚠️</span>
-                                        <span>Transcript failed</span>
-                                    {% else %}
-                                        <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-                                        <span>Not transcribed</span>
-                                    {% endif %}
-                                </span>
-
-                                <!-- Transcription progress/logs toggle for processing recordings -->
-                                {% if trans_status == 'processing' %}
+                                    </span>
                                     <button onclick="toggleTranscriptionLogs({{ recording.id }})"
                                             class="text-xs text-blue-600 hover:text-blue-800 underline"
                                             id="logs-toggle-{{ recording.id }}">
