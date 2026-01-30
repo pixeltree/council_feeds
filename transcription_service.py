@@ -12,7 +12,7 @@ from datetime import timedelta
 import json
 import time
 import logging
-from exceptions import WhisperError, DiarizationError, GeminiError
+from exceptions import WhisperError, DiarizationError
 
 
 class TranscriptionService:
@@ -501,7 +501,7 @@ class TranscriptionService:
             Dictionary with transcript segments and metadata
 
         Raises:
-            FileNotFoundError: If video_path does not exist
+            WhisperError: If video_path does not exist
         """
         if not os.path.exists(video_path):
             raise WhisperError(video_path, f"Video file not found: {video_path}")

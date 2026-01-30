@@ -1296,13 +1296,13 @@ def delete_recording(recording_id: int) -> bool:
         # Delete the recording
         cursor.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
 
-        # Delete the file if it exists
+        # Delete the file if it exists (but don't fail the database deletion if file deletion fails)
         if os.path.exists(file_path):
             try:
                 os.remove(file_path)
             except Exception as e:
+                # Log the failure but do not raise, so database deletion still proceeds
                 logger.warning(f"Could not delete file {file_path}: {e}", exc_info=True)
-                raise RecordingStorageError(file_path, 'delete', str(e))
 
         return True
 

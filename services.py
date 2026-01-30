@@ -14,12 +14,7 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional, Tuple
 
 import database as db
-from exceptions import (
-    StreamConnectionError,
-    RecordingProcessError,
-    RecordingStorageError,
-    TranscriptionError
-)
+from exceptions import RecordingStorageError
 from config import (
     CALGARY_TZ,
     COUNCIL_CALENDAR_API,
@@ -635,10 +630,10 @@ class RecordingService:
                         os.remove(output_file)
                         self.logger.info(f"Removed empty recording file: {output_file}")
                 except Exception as e:
+                    # Log the error but don't raise - we still want to mark recording as failed in DB
                     self.logger.error(f"Could not delete file: {e}", exc_info=True)
-                    raise RecordingStorageError(output_file, 'delete', str(e))
 
-                # Mark recording as failed in database
+                # Mark recording as failed in database (even if file deletion failed)
                 db.update_recording(recording_id, end_time, 'failed', 'No audio content detected')
                 self.logger.info("Recording marked as failed (no content)")
                 return True  # Return success since we handled it properly
