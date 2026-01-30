@@ -20,6 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Copy application code (changes most frequently)
 COPY *.py ./
+COPY database/ ./database/
 COPY templates/ ./templates/
 
 # Create recordings directory
