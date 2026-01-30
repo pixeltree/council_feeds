@@ -303,8 +303,8 @@ class RecordingService:
         ffmpeg_command: str = FFMPEG_COMMAND,
         timezone: Any = CALGARY_TZ,
         stream_service: Optional[StreamService] = None,
-        transcription_service: Optional[Any] = None,
-        post_processor: Optional[Any] = None
+        transcription_service: Optional["TranscriptionService"] = None,
+        post_processor: Optional["PostProcessor"] = None
     ):
         self.output_dir = output_dir
         self.ffmpeg_command = ffmpeg_command
@@ -419,7 +419,9 @@ class RecordingService:
                 '-reconnect_delay_max', '5'
             ])
 
-        cmd.extend(['-i', stream_url if stream_url else ''])
+        if not stream_url:
+            raise ValueError("stream_url cannot be empty")
+        cmd.extend(['-i', stream_url])
 
         # Copy streams without re-encoding
         cmd.extend(['-c', 'copy'])
@@ -431,13 +433,15 @@ class RecordingService:
         # Add format-specific options
         if ENABLE_SEGMENTED_RECORDING:
             # Segmented recording for resilience
+            if not output_pattern:
+                raise ValueError("output_pattern is required when ENABLE_SEGMENTED_RECORDING is True")
             cmd.extend([
                 '-f', 'segment',
                 '-segment_time', str(SEGMENT_DURATION),
                 '-segment_format', format_ext if format_ext == 'mkv' else 'matroska',
                 '-reset_timestamps', '1',
                 '-strftime', '1',  # Allow time formatting in segment names
-                output_pattern if output_pattern else ''
+                output_pattern
             ])
         else:
             # Single file recording

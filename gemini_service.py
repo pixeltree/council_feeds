@@ -306,7 +306,6 @@ def _extract_json_from_response(response_text: str) -> Optional[Dict]:
     except json.JSONDecodeError:
         # Try extracting from markdown code block
         import re
-        from typing import cast
 
         # Pattern: ```json ... ``` or ``` ... ```
         json_pattern = re.compile(r'```(?:json)?\s*(\{.*?\})\s*```', re.DOTALL)

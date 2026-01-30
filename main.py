@@ -3,7 +3,6 @@ import os
 import time
 import threading
 from datetime import datetime
-from typing import Optional, Dict, Any
 import schedule
 import logging
 
