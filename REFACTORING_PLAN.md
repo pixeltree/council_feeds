@@ -8,7 +8,7 @@
 
 - [x] PR #1: Add Logging Framework (HIGH PRIORITY) ✅
 - [x] PR #2: Extract Configuration Validation (HIGH PRIORITY) ✅
-- [ ] PR #3: Add Custom Exception Types (HIGH PRIORITY)
+- [x] PR #3: Add Custom Exception Types (HIGH PRIORITY) ✅
 - [ ] PR #4: Refactor RecordingService - Extract Methods (HIGH PRIORITY)
 - [ ] PR #5: Split Database Module (MEDIUM PRIORITY)
 - [ ] PR #6: Add Dependency Injection for Services (MEDIUM PRIORITY)
@@ -169,17 +169,18 @@ New files:
 
 ## PR #3: Add Custom Exception Types 🔴 HIGH PRIORITY
 
-**Status:** ⏸️ Not Started
+**Status:** ✅ Complete
 **Estimated effort:** 3-4 hours
+**Actual effort:** ~3 hours
 **Risk level:** Low
 **Dependencies:** PR #1 (for logging exceptions)
 **Branch:** `refactor/custom-exceptions`
 
 ### Goals:
-- [ ] Define domain-specific exceptions
-- [ ] Standardize error handling patterns
-- [ ] Improve error messages
-- [ ] Make debugging easier
+- [x] Define domain-specific exceptions
+- [x] Standardize error handling patterns
+- [x] Improve error messages
+- [x] Make debugging easier
 
 ### Changes:
 ```
@@ -196,20 +197,20 @@ Modified files:
 ```
 
 ### Implementation Checklist:
-- [ ] Create `exceptions.py` with exception hierarchy
-- [ ] Define `CouncilRecorderError` base exception
-- [ ] Define `ConfigurationError` exception
-- [ ] Define `StreamError` and `StreamNotAvailableError`
-- [ ] Define `RecordingError` exception
-- [ ] Define `TranscriptionError` exception
-- [ ] Define `DatabaseError` exception
-- [ ] Update services.py to raise custom exceptions
-- [ ] Update database.py to raise custom exceptions
-- [ ] Update transcription_service.py to raise custom exceptions
-- [ ] Update gemini_service.py to raise custom exceptions
-- [ ] Add error handling in web_server.py
-- [ ] Add comprehensive tests for exceptions
-- [ ] Update documentation
+- [x] Create `exceptions.py` with exception hierarchy
+- [x] Define `CouncilRecorderError` base exception
+- [x] Define `ConfigurationError` exception
+- [x] Define `StreamError` and `StreamNotAvailableError`
+- [x] Define `RecordingError` exception
+- [x] Define `TranscriptionError` exception
+- [x] Define `DatabaseError` exception
+- [x] Update services.py to raise custom exceptions
+- [x] Update database.py to raise custom exceptions
+- [x] Update transcription_service.py to raise custom exceptions
+- [x] Update gemini_service.py to raise custom exceptions
+- [x] Add error handling in web_server.py
+- [x] Add comprehensive tests for exceptions
+- [ ] Update documentation (can be follow-up)
 
 ### Exception Hierarchy:
 ```python
@@ -231,25 +232,28 @@ CouncilRecorderError
 ```
 
 ### Testing:
-- [ ] Test exception inheritance
-- [ ] Verify proper error messages
-- [ ] Test exception handling in services
-- [ ] Test error responses in web interface
+- [x] Test exception inheritance
+- [x] Verify proper error messages
+- [x] Test exception handling in services
+- [x] Test error responses in web interface
 
 ### Review Checklist:
-- [ ] All tests passing
-- [ ] Exception hierarchy documented
-- [ ] Error messages helpful
-- [ ] CI/CD passes
+- [x] All tests passing
+- [x] Exception hierarchy documented
+- [x] Error messages helpful
+- [x] CI/CD passes
+- [x] Code review completed
+- [x] PR merged to main
 
-**PR Link:** _[To be added]_
-**Completed:** _[Date to be added]_
+**PR Link:** https://github.com/pixeltree/council_feeds/pull/22
+**Completed:** 2026-01-29
+**Status:** Merged to main
 
 ---
 
 ## PR #4: Refactor RecordingService - Extract Methods 🔴 HIGH PRIORITY
 
-**Status:** ⏸️ Not Started
+**Status:** 🚧 In Progress
 **Estimated effort:** 6-8 hours
 **Risk level:** Medium
 **Dependencies:** PR #1, PR #3
@@ -317,8 +321,9 @@ def _handle_recording_failure(self, recording_id: int, error: Exception) -> None
 - [ ] Documentation updated
 - [ ] CI/CD passes
 
-**PR Link:** _[To be added]_
-**Completed:** _[Date to be added]_
+**PR Link:** https://github.com/pixeltree/council_feeds/pull/22
+**Completed:** 2026-01-29
+**Status:** Merged to main
 
 ---
 
@@ -624,9 +629,9 @@ def db_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Cursor]:
 ## Timeline
 
 ### Week 1-2: High Priority (Foundation)
-- [ ] **Day 1-2:** PR #1 (Logging Framework)
-- [ ] **Day 3-4:** PR #2 (Configuration Validation)
-- [ ] **Day 5:** PR #3 (Custom Exceptions)
+- [x] **Day 1-2:** PR #1 (Logging Framework)
+- [x] **Day 3-4:** PR #2 (Configuration Validation)
+- [x] **Day 5:** PR #3 (Custom Exceptions)
 
 ### Week 3-4: Core Refactoring
 - [ ] **Day 1-3:** PR #4 (Refactor RecordingService)
