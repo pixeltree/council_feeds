@@ -25,8 +25,7 @@ class SegmentMerger:
         self,
         pattern: str,
         output_file: str,
-        timestamp: str,
-        format_ext: str
+        timestamp: str
     ) -> Optional[str]:
         """Merge recording segments into a single file.
 
@@ -34,7 +33,6 @@ class SegmentMerger:
             pattern: Glob pattern for segment files
             output_file: Output file path for merged recording
             timestamp: Timestamp for temporary files
-            format_ext: File format extension
 
         Returns:
             Path to merged file on success, output_file if no segments exist (to allow validation to handle it), or None if merge actually failed

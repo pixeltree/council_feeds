@@ -256,7 +256,7 @@ class TestTranscriptionIntegration:
     @patch('services.recording_service.ENABLE_TRANSCRIPTION', True)
     @patch('services.recording_service.db.update_recording_transcript')
     @patch('transcription_service.TranscriptionService')
-    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.recording_process')
     @patch('os.path.exists')
     @patch('services.recording_validator.subprocess.run')  # Mock audio detection
     @patch('services.recording_service.db.create_recording')
@@ -273,7 +273,7 @@ class TestTranscriptionIntegration:
         mock_create_recording,
         mock_run,
         mock_exists,
-        mock_popen,
+        mock_recording_process,
         mock_transcription_service_class,
         mock_update_transcript,
         temp_output_dir
@@ -299,7 +299,7 @@ class TestTranscriptionIntegration:
             call_count["count"] += 1
             return None if call_count["count"] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Setup transcription mocks
         mock_transcriber = Mock()
@@ -339,7 +339,7 @@ class TestTranscriptionIntegration:
 
     @patch('services.recording_service.ENABLE_TRANSCRIPTION', True)
     @patch('services.recording_service.PYANNOTE_API_TOKEN', None)
-    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.recording_process')
     @patch('services.recording_service.db.create_recording')
     @patch('services.recording_service.db.update_recording')
     @patch('services.recording_service.db.log_stream_status')
@@ -352,7 +352,7 @@ class TestTranscriptionIntegration:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
-        mock_popen,
+        mock_recording_process,
         temp_output_dir
     ):
         """Test that recording completes even if transcription fails."""
@@ -367,7 +367,7 @@ class TestTranscriptionIntegration:
             call_count["count"] += 1
             return None if call_count["count"] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Setup stream service
         mock_stream_service = Mock()
@@ -394,7 +394,7 @@ class TestPostProcessingIntegration:
     @patch('os.path.exists')
     @patch('services.recording_validator.subprocess.run')  # Mock audio detection
     @patch('post_processor.PostProcessor')
-    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.recording_process')
     @patch('services.recording_service.db.create_recording')
     @patch('services.recording_service.db.update_recording')
     @patch('services.recording_service.db.log_stream_status')
@@ -407,7 +407,7 @@ class TestPostProcessingIntegration:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
-        mock_popen,
+        mock_recording_process,
         mock_post_processor_class,
         mock_run,
         mock_exists,
@@ -436,7 +436,7 @@ class TestPostProcessingIntegration:
             call_count["count"] += 1
             return None if call_count["count"] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Setup post-processor mocks
         mock_processor = Mock()

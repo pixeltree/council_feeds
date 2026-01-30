@@ -4,6 +4,7 @@ import pytest
 import responses
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock
+from contextlib import contextmanager
 from config import CALGARY_TZ, COUNCIL_CHAMBER, ENGINEERING_TRADITIONS_ROOM, STREAM_URLS_BY_ROOM
 from services import (
     CalendarService,
@@ -376,7 +377,7 @@ class TestRecordingService:
         assert service.timezone == CALGARY_TZ
 
     @patch('time.sleep')
-    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.recording_process')
     @patch('services.recording_service.db.create_recording')
     @patch('services.recording_service.db.update_recording')
     @patch('services.recording_service.db.log_stream_status')
@@ -389,7 +390,7 @@ class TestRecordingService:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
-        mock_popen,
+        mock_recording_process,
         mock_sleep,
         temp_output_dir
     ):
@@ -407,7 +408,7 @@ class TestRecordingService:
             call_count['count'] += 1
             return None if call_count['count'] == 1 else 0
         mock_process.poll.side_effect = poll_side_effect
-        mock_popen.return_value = mock_process
+        mock_recording_process.return_value.__enter__.return_value = mock_process
 
         # Mock stream service
         mock_stream_service = Mock()
@@ -424,7 +425,7 @@ class TestRecordingService:
         mock_create_recording.assert_called_once()
         mock_update_recording.assert_called_once()
 
-    @patch('services.recording_service.subprocess.Popen')
+    @patch('services.recording_service.recording_process')
     @patch('services.recording_service.db.create_recording')
     @patch('services.recording_service.db.update_recording')
     @patch('services.recording_service.db.log_stream_status')
@@ -433,12 +434,12 @@ class TestRecordingService:
         mock_log_status,
         mock_update_recording,
         mock_create_recording,
-        mock_popen,
+        mock_recording_process,
         temp_output_dir
     ):
         """Test recording failure handling."""
         mock_create_recording.return_value = 1
-        mock_popen.side_effect = Exception("FFmpeg failed")
+        mock_recording_process.side_effect = Exception("FFmpeg failed")
 
         service = RecordingService(output_dir=temp_output_dir)
         result = service.record_stream('https://example.com/stream.m3u8')
@@ -477,10 +478,11 @@ class TestRecordingService:
         service.current_process = mock_process
         assert service.is_recording() is False
 
+    @patch('services.recording_service.ENABLE_TRANSCRIPTION', False)
     @patch('os.path.exists')
     @patch('services.recording_validator.subprocess.run')  # Mock audio detection
     @patch('time.sleep')
-    @patch('services.recording_service.subprocess.Popen')
+    @patch('resource_managers.subprocess.Popen')  # Mock at resource_managers level
     @patch('services.recording_service.db.create_recording')
     @patch('services.recording_service.db.update_recording')
     @patch('services.recording_service.db.log_stream_status')
@@ -521,8 +523,12 @@ class TestRecordingService:
         mock_process = MagicMock()
         mock_process.pid = 12345
 
+        # Keep process alive until manually stopped
         def poll_side_effect():
-            return 0 if stop_requested.is_set() else None
+            # Return None (still running) unless stop has been called
+            if stop_requested.is_set():
+                return 0
+            return None
         mock_process.poll.side_effect = poll_side_effect
 
         def send_signal_side_effect(sig):
@@ -535,7 +541,10 @@ class TestRecordingService:
         mock_popen.side_effect = popen_side_effect
 
         mock_stream_service = Mock()
-        mock_stream_service.is_stream_live.return_value = True
+        # Keep stream live until stop is requested
+        def is_stream_live_side_effect(url):
+            return not stop_requested.is_set()
+        mock_stream_service.is_stream_live.side_effect = is_stream_live_side_effect
 
         service = RecordingService(
             output_dir=temp_output_dir,

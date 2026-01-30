@@ -244,8 +244,7 @@ class RecordingService:
                 merged_file = self.segment_merger.merge_segments(
                     output_pattern,
                     output_file,
-                    timestamp,
-                    format_ext
+                    timestamp
                 )
                 if merged_file is None:
                     # Merge actually failed (not just no segments)
