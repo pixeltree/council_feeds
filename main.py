@@ -26,7 +26,8 @@ from config import (
     STREAM_PAGE_URL,
     OUTPUT_DIR,
     MEETING_BUFFER_BEFORE,
-    MEETING_BUFFER_AFTER
+    MEETING_BUFFER_AFTER,
+    validate_config
 )
 from services import (
     CalendarService,
@@ -72,6 +73,15 @@ def main():
     logger.info("=" * 70)
     logger.info("Calgary Council Stream Recorder - Smart Scheduler Edition")
     logger.info("=" * 70)
+
+    # Validate configuration at startup (fail fast if misconfigured)
+    try:
+        app_config = validate_config()
+        logger.info("Configuration validated successfully")
+    except ValueError as e:
+        logger.error(f"Configuration validation failed: {e}")
+        logger.error("Please fix the configuration errors and restart the application")
+        return  # Exit gracefully
     logger.info(f"Stream URL: {STREAM_PAGE_URL}")
     logger.info(f"Output directory: {OUTPUT_DIR}")
     logger.info(f"Database: {db.DB_PATH}")
