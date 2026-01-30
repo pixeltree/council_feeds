@@ -60,7 +60,7 @@
         <div class="bg-white rounded-xl p-6 shadow-lg">
             {% if recordings %}
                 {% for recording in recordings %}
-                <div class="border border-gray-200 rounded-lg p-5 mb-4 bg-gray-50" id="recording-{{ recording.id }}">
+                <div class="border border-gray-200 rounded-lg p-5 mb-4 bg-white hover:shadow-md transition" id="recording-{{ recording.id }}">
                     <!-- Recording Header -->
                     <div class="flex flex-col lg:flex-row justify-between items-start gap-4 mb-3">
                         <div class="flex-1">
@@ -192,70 +192,17 @@
                         </div>
                     </div>
 
-                    <!-- Segments Section -->
-                    {% if recording.is_segmented %}
-                        <div class="mt-4 pt-4 border-t border-gray-200">
-                            <div class="text-gray-800 font-semibold mb-3 text-sm">
-                                📊 Segments ({{ recording.segments|length }})
-                            </div>
-                            {% if recording.segments %}
-                                {% for segment in recording.segments %}
-                                <div class="bg-white border border-gray-200 rounded-md p-3 mb-2 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                                    <div class="flex-1">
-                                        <div class="text-gray-800 font-semibold text-sm mb-1 flex items-center gap-2 flex-wrap">
-                                            <span>Segment {{ segment.segment_number }}</span>
-                                            {% if segment.has_transcript %}
-                                                <span class="inline-flex items-center gap-1 text-xs">
-                                                    <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                                                    <span class="text-green-600">Transcribed</span>
-                                                </span>
-                                            {% else %}
-                                                <span class="inline-flex items-center gap-1 text-xs">
-                                                    <span class="w-2 h-2 rounded-full bg-orange-500"></span>
-                                                    <span class="text-orange-600">No transcript</span>
-                                                </span>
-                                            {% endif %}
-                                        </div>
-                                        <div class="text-gray-600 text-xs">
-                                            {{ "%.1f"|format(segment.start_time_seconds / 60) }} - {{ "%.1f"|format(segment.end_time_seconds / 60) }} min
-                                            • Duration: {{ "%.1f"|format(segment.duration_seconds / 60) }} min
-                                            {% if segment.file_size_bytes %}
-                                                • {{ "%.1f"|format(segment.file_size_bytes / (1024**2)) }} MB
-                                            {% endif %}
-                                        </div>
-                                    </div>
-                                    {% if segment.has_transcript and segment.transcript_path %}
-                                        <div class="relative inline-block download-dropdown">
-                                            <button class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-md font-semibold text-xs inline-flex items-center gap-1"
-                                                    onclick="toggleDropdown(event, 'download-segment-{{ segment.id }}')">
-                                                📄 Download
-                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                                                </svg>
-                                            </button>
-
-                                            <div id="download-segment-{{ segment.id }}" class="hidden absolute right-0 mt-2 w-52 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
-                                                <div class="py-1">
-                                                    <a href="/download/transcript/segment/{{ segment.id }}"
-                                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                                        📄 Transcript (JSON)
-                                                    </a>
-                                                    <a href="/download/diarization/segment/{{ segment.id }}"
-                                                       class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                                                        🎯 Diarization
-                                                    </a>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    {% endif %}
-                                </div>
-                                {% endfor %}
-                            {% else %}
-                                <div class="text-gray-500 text-sm py-2">
-                                    No segments available
-                                </div>
-                            {% endif %}
-                        </div>
+                    <!-- Segments indicator (if segmented) -->
+                    {% if recording.is_segmented and recording.segments %}
+                    <div class="mt-3 pt-3 border-t border-gray-100">
+                        <a href="/recording/{{ recording.id }}#segments"
+                           class="text-sm text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1">
+                            📊 {{ recording.segments|length }} segments
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                        </a>
+                    </div>
                     {% endif %}
                 </div>
                 {% endfor %}
