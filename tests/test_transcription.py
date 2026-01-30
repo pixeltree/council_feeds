@@ -569,8 +569,8 @@ class TestTranscriptionService:
         whisper_audio_path = mock_whisper.transcribe.call_args[0][0]
         assert whisper_audio_path == '/fake/video.wav', "Should use persistent WAV file"
 
-        # Verify WAV file was cleaned up after successful transcription
-        mock_remove.assert_called_once_with('/fake/video.wav')
+        # Verify WAV file was NOT cleaned up (kept for resumability)
+        mock_remove.assert_not_called()
 
         # Verify result
         assert result['file'] == '/fake/video.mp4'
@@ -639,8 +639,8 @@ class TestTranscriptionService:
         mock_whisper.transcribe.assert_called_once()
         assert mock_post.call_count == 2  # Upload URL + diarization API
 
-        # Verify WAV file was cleaned up after successful transcription
-        mock_remove.assert_called_once_with('/fake/video.wav')
+        # Verify WAV file was NOT cleaned up (kept for resumability)
+        mock_remove.assert_not_called()
 
         # Verify result
         assert result['file'] == '/fake/video.mp4'
@@ -705,3 +705,209 @@ class TestTranscriptionService:
         m.assert_called_once_with('/test/output.json', 'w', encoding='utf-8')
         mock_json_dump.assert_called_once()
         assert mock_json_dump.call_args[0][0] == transcript
+
+    @patch('requests.put')
+    @patch('os.path.getsize')
+    @patch('subprocess.run')
+    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('requests.post')
+    @patch('os.path.exists')
+    @patch('transcription_progress.detect_transcription_progress')
+    @patch('concurrent.futures.ThreadPoolExecutor')
+    def test_parallel_execution_of_whisper_and_diarization(self, mock_executor_class, mock_progress, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
+        """Test that Whisper and Diarization run in parallel when both need to execute."""
+        # Mock resumability detection to return no completed steps
+        mock_progress.return_value = {}
+
+        mock_exists.return_value = True
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
+
+        # Mock Whisper model
+        mock_whisper = Mock()
+        mock_segment = Mock()
+        mock_segment.start = 0.0
+        mock_segment.end = 5.0
+        mock_segment.text = ' Parallel test'
+        mock_info = Mock()
+        mock_info.language = 'en'
+        mock_whisper.transcribe.return_value = ([mock_segment], mock_info)
+        mock_load_whisper.return_value = mock_whisper
+
+        # Mock file upload
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock API responses for diarization
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
+
+        # Mock ThreadPoolExecutor
+        mock_executor = Mock()
+        mock_executor_class.return_value.__enter__ = Mock(return_value=mock_executor)
+        mock_executor_class.return_value.__exit__ = Mock(return_value=False)
+
+        # Mock futures for both tasks
+        mock_whisper_future = Mock()
+        mock_whisper_future.result.return_value = {
+            'language': 'en',
+            'text': ' Parallel test',
+            'segments': [{'start': 0.0, 'end': 5.0, 'text': ' Parallel test'}]
+        }
+
+        mock_diarization_future = Mock()
+        mock_diarization_future.result.return_value = [
+            {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+        ]
+
+        # Setup executor.submit to return the appropriate futures
+        def submit_side_effect(func, *args, **kwargs):
+            if func.__name__ == 'transcribe_audio':
+                return mock_whisper_future
+            elif func.__name__ == 'perform_diarization':
+                return mock_diarization_future
+            return Mock()
+
+        mock_executor.submit.side_effect = submit_side_effect
+
+        service = TranscriptionService(pyannote_api_token="test_token")
+
+        with patch('builtins.open', mock_open()):
+            result = service.transcribe_with_speakers(
+                '/fake/video.mp4',
+                save_to_file=False
+            )
+
+        # Verify ThreadPoolExecutor was created with 2 workers
+        mock_executor_class.assert_called_once_with(max_workers=2)
+
+        # Verify both tasks were submitted to executor
+        assert mock_executor.submit.call_count == 2
+
+        # Verify both futures were awaited
+        mock_whisper_future.result.assert_called_once()
+        mock_diarization_future.result.assert_called_once()
+
+        # Verify result
+        assert result['file'] == '/fake/video.mp4'
+
+    @patch('requests.put')
+    @patch('os.path.getsize')
+    @patch('subprocess.run')
+    @patch('transcription_service.TranscriptionService._load_whisper_model')
+    @patch('requests.post')
+    @patch('os.path.exists')
+    @patch('transcription_progress.detect_transcription_progress')
+    def test_parallel_execution_skips_completed_steps(self, mock_progress, mock_exists, mock_post, mock_load_whisper, mock_subprocess, mock_getsize, mock_put):
+        """Test that parallel execution only runs incomplete steps."""
+        # Mock resumability: Whisper completed, diarization pending
+        mock_progress.return_value = {
+            'whisper': {'status': 'completed', 'file': '/fake/video.mp4.whisper.json'},
+            'diarization': {'status': 'pending'}
+        }
+
+        mock_getsize.return_value = 1024 * 1024  # 1 MB
+
+        # Whisper file exists
+        def exists_side_effect(path):
+            if path == '/fake/video.mp4':
+                return True
+            elif path == '/fake/video.mp4.whisper.json':
+                return True
+            return False
+
+        mock_exists.side_effect = exists_side_effect
+
+        # Mock loading existing Whisper result
+        whisper_data = {
+            'language': 'en',
+            'full_text': ' Existing whisper',
+            'segments': [{'start': 0.0, 'end': 5.0, 'text': ' Existing whisper'}]
+        }
+
+        # Mock file upload for diarization
+        mock_put_response = Mock()
+        mock_put_response.status_code = 200
+        mock_put.return_value = mock_put_response
+
+        # Mock API responses for diarization
+        mock_upload_response = Mock()
+        mock_upload_response.status_code = 200
+        mock_upload_response.json.return_value = {'url': 'https://fake-upload-url.com'}
+
+        mock_diarization_response = Mock()
+        mock_diarization_response.status_code = 200
+        mock_diarization_response.json.return_value = {
+            'diarization': [
+                {'start': 0.0, 'end': 10.0, 'speaker': 'SPEAKER_00'}
+            ]
+        }
+        mock_post.side_effect = [mock_upload_response, mock_diarization_response]
+
+        service = TranscriptionService(pyannote_api_token="test_token")
+
+        m = mock_open(read_data=json.dumps(whisper_data).encode())
+        with patch('builtins.open', m):
+            result = service.transcribe_with_speakers(
+                '/fake/video.mp4',
+                save_to_file=False
+            )
+
+        # Verify Whisper was NOT called (loaded from file)
+        mock_load_whisper.assert_not_called()
+
+        # Verify diarization WAS called
+        assert mock_post.call_count == 2  # Upload URL + diarization API
+
+        # Verify result contains loaded whisper data
+        assert result['language'] == 'en'
+        assert result['num_speakers'] == 1
+
+    @patch('os.path.exists')
+    def test_wav_file_persists_for_resumability(self, mock_exists):
+        """Test that WAV files are kept permanently for resumability."""
+        mock_exists.return_value = True
+
+        service = TranscriptionService()
+
+        # Extract audio - should use existing WAV
+        result_path = service.extract_audio_to_wav('/fake/video.mp4')
+
+        assert result_path == '/fake/video.wav'
+        # File exists, so no subprocess call needed
+
+    @patch('subprocess.run')
+    @patch('os.path.exists')
+    def test_wav_file_created_persists_across_retries(self, mock_exists, mock_subprocess):
+        """Test that created WAV files are not deleted, enabling retries."""
+        mock_exists.return_value = False  # WAV doesn't exist initially
+        mock_subprocess.return_value = Mock(returncode=0)
+
+        service = TranscriptionService()
+
+        # First attempt: create WAV
+        result_path = service.extract_audio_to_wav('/fake/video.mp4')
+        assert result_path == '/fake/video.wav'
+
+        # Verify ffmpeg was called
+        assert mock_subprocess.call_count == 1
+
+        # Simulate retry scenario: WAV now exists
+        mock_exists.return_value = True
+
+        # Second attempt: should reuse existing WAV
+        result_path = service.extract_audio_to_wav('/fake/video.mp4')
+        assert result_path == '/fake/video.wav'
+
+        # ffmpeg should NOT be called again
+        assert mock_subprocess.call_count == 1  # Still 1, not 2
