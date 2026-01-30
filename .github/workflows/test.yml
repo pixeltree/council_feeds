@@ -108,3 +108,18 @@ jobs:
         docker run --rm council_feeds:test ls -la /app/templates/
         docker run --rm council_feeds:test test -f /app/templates/index.html
         docker run --rm council_feeds:test test -f /app/templates/recordings.html
+
+    - name: Test Python imports in Docker
+      run: |
+        docker run --rm council_feeds:test python -c "
+        import sys
+        try:
+            from services import CalendarService, MeetingScheduler, StreamService, RecordingService
+            from transcription import AudioProcessor, WhisperService, DiarizationService, TranscriptMerger
+            from config import validate_config
+            print('✓ All imports successful')
+            sys.exit(0)
+        except ImportError as e:
+            print(f'✗ Import failed: {e}')
+            sys.exit(1)
+        "

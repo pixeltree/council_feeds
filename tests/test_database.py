@@ -474,3 +474,149 @@ class TestDatabaseRoomSupport:
         meetings = db.get_upcoming_meetings()
         assert len(meetings) == 1
         assert meetings[0]['room'] == '' or meetings[0]['room'] is None
+
+
+@pytest.mark.unit
+class TestStaleRecordings:
+    """Test stale recording detection and cleanup."""
+
+    def test_get_stale_recordings_missing_file(self, temp_db_path, temp_db_dir, monkeypatch):
+        """Test that recordings with missing files are detected as stale."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create recording with non-existent file (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
+        recording_id = db.create_recording(
+            None,
+            '/nonexistent/file.mp4',
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Mark as completed (file doesn't exist so size will be None)
+        end_time = start_time + timedelta(hours=1)
+        db.update_recording(recording_id, end_time, 'completed')
+
+        # Should be detected as stale
+        stale = db.get_stale_recordings()
+        assert len(stale) == 1
+        assert stale[0]['id'] == recording_id
+        assert stale[0]['file_exists'] is False
+
+    def test_get_stale_recordings_stuck_in_recording_state(self, temp_db_path, temp_db_dir, tmp_path, monkeypatch):
+        """Test that recordings stuck in 'recording' status are detected as stale."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create temp file
+        temp_file = tmp_path / "recording.mp4"
+        temp_file.write_bytes(b'test content')
+
+        # Create recording that's stuck in recording state (>2 hours ago)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(hours=3)
+        recording_id = db.create_recording(
+            None,
+            str(temp_file),
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Don't call update_recording - leave it in 'recording' state
+
+        # Should be detected as stale
+        stale = db.get_stale_recordings()
+        assert len(stale) == 1
+        assert stale[0]['id'] == recording_id
+        assert stale[0]['status'] == 'recording'
+
+    def test_get_stale_recordings_tiny_file(self, temp_db_path, temp_db_dir, tmp_path, monkeypatch):
+        """Test that recordings with tiny files are detected as stale."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create a tiny file
+        temp_file = tmp_path / "tiny.mp4"
+        temp_file.write_text('tiny')
+
+        # Create recording (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
+        recording_id = db.create_recording(
+            None,
+            str(temp_file),
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Mark as completed (will calculate size from actual file)
+        end_time = start_time + timedelta(hours=1)
+        db.update_recording(recording_id, end_time, 'completed')
+
+        # Should be detected as stale
+        stale = db.get_stale_recordings()
+        assert len(stale) == 1
+        assert stale[0]['id'] == recording_id
+        assert stale[0]['actual_file_size'] < 1000
+
+    def test_get_stale_recordings_excludes_valid_recordings(self, temp_db_path, temp_db_dir, tmp_path, monkeypatch):
+        """Test that valid recordings are not detected as stale."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create a valid file with meaningful content
+        temp_file = tmp_path / "valid.mp4"
+        temp_file.write_bytes(b'0' * 10000)  # 10KB file
+
+        # Create recording (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
+        recording_id = db.create_recording(
+            None,
+            str(temp_file),
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Mark as completed (will calculate size from actual file)
+        end_time = start_time + timedelta(hours=1)
+        db.update_recording(recording_id, end_time, 'completed')
+
+        # Should NOT be detected as stale
+        stale = db.get_stale_recordings()
+        assert len(stale) == 0
+
+    def test_get_stale_recordings_completed_with_no_data(self, temp_db_path, temp_db_dir, tmp_path, monkeypatch):
+        """Test that completed recordings with NULL or 0 duration/size are detected as stale."""
+        monkeypatch.setattr(db, 'DB_PATH', temp_db_path)
+        monkeypatch.setattr(db, 'DB_DIR', temp_db_dir)
+
+        db.init_database()
+
+        # Create file
+        temp_file = tmp_path / "empty.mp4"
+        temp_file.write_bytes(b'test')
+
+        # Create recording (use recent date)
+        start_time = datetime.now(CALGARY_TZ) - timedelta(days=1)
+        recording_id = db.create_recording(
+            None,
+            str(temp_file),
+            'https://example.com/stream.m3u8',
+            start_time
+        )
+
+        # Mark as completed with same time (0 duration)
+        db.update_recording(recording_id, start_time, 'completed')
+
+        # Should be detected as stale
+        stale = db.get_stale_recordings()
+        assert len(stale) == 1
+        assert stale[0]['id'] == recording_id
+        assert stale[0]['duration_seconds'] == 0
