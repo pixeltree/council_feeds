@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Import Past Meeting - Calgary Council Stream Recorder</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .spinner {
+            border: 3px solid #e5e7eb;
+            border-top-color: #6366f1;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 0.8s linear infinite;
+        }
+    </style>
+    <script>
+        async function submitImport(event) {
+            event.preventDefault();
+
+            const form = event.target;
+            const url = form.escriba_url.value;
+            const title = form.override_title.value;
+            const date = form.override_date.value;
+
+            // Show progress
+            document.getElementById('error-message').classList.add('hidden');
+            document.getElementById('success-message').classList.add('hidden');
+            document.getElementById('progress-section').classList.remove('hidden');
+
+            // Disable form
+            const submitButton = form.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+
+            try {
+                const payload = { escriba_url: url };
+                if (title) payload.override_title = title;
+                if (date) payload.override_date = date;
+
+                const response = await fetch('/api/recordings/import-vod', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    // Show success
+                    document.getElementById('progress-section').classList.add('hidden');
+                    document.getElementById('success-message').classList.remove('hidden');
+                    document.getElementById('success-text').textContent = result.message || 'Video download started successfully!';
+
+                    // Redirect to recordings page after 2 seconds
+                    setTimeout(() => {
+                        window.location.href = '/recordings';
+                    }, 2000);
+                } else {
+                    // Show error
+                    document.getElementById('progress-section').classList.add('hidden');
+                    document.getElementById('error-message').classList.remove('hidden');
+                    document.getElementById('error-text').textContent = result.error || 'Failed to start import';
+                    submitButton.disabled = false;
+                }
+            } catch (error) {
+                // Show error
+                document.getElementById('progress-section').classList.add('hidden');
+                document.getElementById('error-message').classList.remove('hidden');
+                document.getElementById('error-text').textContent = 'Network error: ' + error.message;
+                submitButton.disabled = false;
+            }
+        }
+    </script>
+</head>
+<body class="bg-gradient-to-br from-indigo-500 to-purple-600 min-h-screen p-5">
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <div class="bg-white rounded-xl p-8 mb-8 shadow-lg">
+            <div class="flex items-center justify-between mb-4">
+                <h1 class="text-gray-800 text-3xl font-bold">Import Past Meeting Video</h1>
+                <a href="/" class="text-indigo-600 font-semibold px-4 py-2 rounded-lg hover:bg-gray-50 transition">
+                    ← Back to Home
+                </a>
+            </div>
+            <p class="text-gray-600">
+                Import videos from past council meetings hosted on Escriba meeting pages.
+                The system will automatically extract meeting metadata and download the video for processing.
+            </p>
+        </div>
+
+        <!-- Import Form -->
+        <div class="bg-white rounded-xl p-8 shadow-lg">
+            <form onsubmit="submitImport(event)" class="space-y-6">
+                <!-- URL Input -->
+                <div>
+                    <label for="escriba_url" class="block text-gray-700 font-semibold mb-2">
+                        Escriba Meeting URL *
+                    </label>
+                    <input
+                        type="url"
+                        id="escriba_url"
+                        name="escriba_url"
+                        required
+                        pattern="https://pub-calgary\.escribemeetings\.com/.*"
+                        placeholder="https://pub-calgary.escribemeetings.com/Meeting.aspx?Id=..."
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <p class="text-gray-500 text-sm mt-1">
+                        Enter the full URL of the Escriba meeting page
+                    </p>
+                </div>
+
+                <!-- Optional Override Title -->
+                <div>
+                    <label for="override_title" class="block text-gray-700 font-semibold mb-2">
+                        Meeting Title (Optional)
+                    </label>
+                    <input
+                        type="text"
+                        id="override_title"
+                        name="override_title"
+                        placeholder="Leave blank to auto-extract from page"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <p class="text-gray-500 text-sm mt-1">
+                        Override the automatically extracted meeting title
+                    </p>
+                </div>
+
+                <!-- Optional Override Date -->
+                <div>
+                    <label for="override_date" class="block text-gray-700 font-semibold mb-2">
+                        Meeting Date (Optional)
+                    </label>
+                    <input
+                        type="date"
+                        id="override_date"
+                        name="override_date"
+                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <p class="text-gray-500 text-sm mt-1">
+                        Override the automatically extracted meeting date
+                    </p>
+                </div>
+
+                <!-- Progress Section (hidden by default) -->
+                <div id="progress-section" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div class="flex items-center gap-3">
+                        <div class="spinner"></div>
+                        <div>
+                            <p class="text-blue-800 font-semibold">Processing...</p>
+                            <p class="text-blue-600 text-sm">Extracting meeting information and starting download</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Success Message (hidden by default) -->
+                <div id="success-message" class="hidden bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        <div>
+                            <p class="text-green-800 font-semibold">Success!</p>
+                            <p id="success-text" class="text-green-600 text-sm">Video download started successfully!</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Error Message (hidden by default) -->
+                <div id="error-message" class="hidden bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                        <div>
+                            <p class="text-red-800 font-semibold">Error</p>
+                            <p id="error-text" class="text-red-600 text-sm">Failed to import video</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Submit Button -->
+                <div class="flex gap-4">
+                    <button
+                        type="submit"
+                        class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-3 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        Import Video
+                    </button>
+                    <a
+                        href="/"
+                        class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold px-6 py-3 rounded-lg transition text-center"
+                    >
+                        Cancel
+                    </a>
+                </div>
+            </form>
+        </div>
+
+        <!-- Help Section -->
+        <div class="bg-white rounded-xl p-6 mt-8 shadow-lg">
+            <h3 class="text-gray-800 text-xl font-bold mb-3">How to Import</h3>
+            <ol class="list-decimal list-inside space-y-2 text-gray-600">
+                <li>Navigate to a past meeting on <a href="https://pub-calgary.escribemeetings.com" target="_blank" class="text-indigo-600 hover:underline">Escriba</a></li>
+                <li>Copy the full URL from your browser's address bar</li>
+                <li>Paste the URL into the form above</li>
+                <li>Click "Import Video" to start the download</li>
+                <li>Once downloaded, the video will appear in the recordings list</li>
+                <li>You can then post-process and transcribe it like any other recording</li>
+            </ol>
+        </div>
+    </div>
+</body>
+</html>
