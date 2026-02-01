@@ -416,19 +416,19 @@ class TestPostProcessor:
         assert result['success'] is False
         assert 'WAV extraction failed' in result['error']
 
+    @patch('post_processor.os.path.getsize')
     @patch('post_processor.os.path.exists')
     @patch('post_processor.subprocess.run')
-    def test_extract_wav_success(self, mock_run, mock_exists):
+    def test_extract_wav_success(self, mock_run, mock_exists, mock_getsize):
         """Test successful WAV extraction."""
-        mock_exists.return_value = False  # WAV doesn't exist yet
+        # First call: check if WAV exists (line 478) - False
+        # Second call: check after ffmpeg (line 515) - True
+        mock_exists.side_effect = [False, True]
         mock_run.return_value = Mock(returncode=0)
+        mock_getsize.return_value = 1024*1024*100
 
         processor = PostProcessor()
-
-        # Mock os.path.exists to return True after ffmpeg runs
-        with patch('post_processor.os.path.exists', side_effect=[False, True]):
-            with patch('post_processor.os.path.getsize', return_value=1024*1024*100):
-                result = processor.extract_wav('/fake/video.mp4')
+        result = processor.extract_wav('/fake/video.mp4')
 
         assert result == '/fake/video.wav'
         mock_run.assert_called_once()
