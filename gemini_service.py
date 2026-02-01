@@ -26,6 +26,10 @@ async def _refine_with_chunking(
     Refine large transcripts using chunking strategy.
     Splits into smaller chunks to avoid Gemini response truncation.
     Each chunk is saved to a debug folder for inspection and retry.
+
+    Note: Debug files are saved to {video_file}.gemini_debug/ directory.
+    These files are useful for debugging but may accumulate over time.
+    Consider cleaning up old debug folders periodically if disk space is a concern.
     """
     segments = merged_transcript.get('segments', [])
     total_segments = len(segments)
