@@ -28,8 +28,8 @@ from config import (
     MEETING_BUFFER_BEFORE,
     MEETING_BUFFER_AFTER,
     ENABLE_TRANSCRIPTION,
+    PYANNOTE_SEGMENTATION_THRESHOLD,
     ENABLE_POST_PROCESSING,
-    WHISPER_MODEL,
     PYANNOTE_API_TOKEN,
     POST_PROCESS_SILENCE_THRESHOLD_DB,
     POST_PROCESS_MIN_SILENCE_DURATION,
@@ -48,13 +48,71 @@ calendar_service = CalendarService()
 meeting_scheduler = MeetingScheduler()
 stream_service = StreamService()
 
+def resume_incomplete_pyannote_jobs(logger):
+    """Resume polling for any incomplete pyannote diarization jobs."""
+    import threading
+
+    with db.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, file_path, pyannote_job_id
+            FROM recordings
+            WHERE pyannote_job_id IS NOT NULL
+            AND diarization_status IN ('pending', 'running')
+        """)
+        incomplete_jobs = cursor.fetchall()
+
+    if not incomplete_jobs:
+        logger.info("No incomplete pyannote jobs found")
+        return
+
+    logger.info(f"Found {len(incomplete_jobs)} incomplete pyannote job(s). Resuming...")
+
+    for recording_id, file_path, job_id in incomplete_jobs:
+        logger.info(f"Resuming pyannote job {job_id} for recording {recording_id}")
+
+        def resume_job():
+            import json
+            try:
+                from transcription_service import TranscriptionService
+                service = TranscriptionService(
+                    pyannote_api_token=PYANNOTE_API_TOKEN,
+                    pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
+                )
+                # Trigger diarization - it will detect and resume the existing job
+                audio_path = file_path + '.wav' if not file_path.endswith('.wav') else file_path
+                diarization_segments = service.perform_diarization(audio_path, recording_id=recording_id)
+
+                # Save diarization output
+                pyannote_path = file_path + '.diarization.pyannote.json'
+                pyannote_data = {
+                    'file': file_path,
+                    'segments': diarization_segments,
+                    'num_speakers': len(set(seg['speaker'] for seg in diarization_segments)) if diarization_segments else 0
+                }
+                with open(pyannote_path, 'w', encoding='utf-8') as f:
+                    json.dump(pyannote_data, f, indent=2, ensure_ascii=False)
+
+                # Update database
+                db.update_diarization_path(recording_id, pyannote_path, source='pyannote')
+
+                logger.info(f"Successfully resumed and completed pyannote job for recording {recording_id}")
+                logger.info(f"Saved results to: {pyannote_path}")
+            except Exception as e:
+                logger.error(f"Failed to resume pyannote job for recording {recording_id}: {e}", exc_info=True)
+
+        # Run in background thread
+        thread = threading.Thread(target=resume_job, daemon=True)
+        thread.start()
+
+
 # Create optional services based on configuration
 transcription_service = None
 if ENABLE_TRANSCRIPTION:
     from transcription_service import TranscriptionService
     transcription_service = TranscriptionService(
-        whisper_model=WHISPER_MODEL,
-        pyannote_api_token=PYANNOTE_API_TOKEN
+        pyannote_api_token=PYANNOTE_API_TOKEN,
+        pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
     )
 
 post_processor = None
@@ -143,6 +201,10 @@ def main() -> None:
 
     # Initialize database
     db.init_database()
+
+    # Resume any incomplete pyannote jobs on startup (after DB is initialized)
+    if ENABLE_TRANSCRIPTION and PYANNOTE_API_TOKEN:
+        resume_incomplete_pyannote_jobs(logger)
 
     # Start scheduler thread for midnight calendar refresh
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)

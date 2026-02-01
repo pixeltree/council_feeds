@@ -4,15 +4,19 @@ Web server module for Calgary Council Stream Recorder.
 Provides a simple web interface to view recording status and upcoming meetings.
 """
 
+import json
 import logging
-from flask import Flask, render_template, jsonify, send_file, request, Response
-import database as db
+import os
+import threading
+import time
 from datetime import datetime
 from typing import Dict, List, Optional, Union, Tuple, Any
+
+from flask import Flask, render_template, jsonify, send_file, request, Response
+
+import database as db
 from config import CALGARY_TZ, WEB_HOST, WEB_PORT, OUTPUT_DIR
-import os
 from post_processor import PostProcessor
-import threading
 from shared_state import monitoring_state
 from exceptions import (
     CouncilRecorderError,
@@ -21,6 +25,7 @@ from exceptions import (
     DatabaseError
 )
 from services.vod_service import VodService
+from background_tasks import task_manager
 
 logger = logging.getLogger(__name__)
 app = Flask(__name__)
@@ -201,7 +206,9 @@ def recording_detail(recording_id: int) -> Union[str, Tuple[str, int]]:
         'post_process_status': recording.get('post_process_status'),
         'post_process_error': recording.get('post_process_error'),
         'diarization_pyannote_path': recording.get('diarization_pyannote_path'),
-        'diarization_gemini_path': recording.get('diarization_gemini_path')
+        'diarization_gemini_path': recording.get('diarization_gemini_path'),
+        'diarization_status': recording.get('diarization_status'),
+        'pyannote_job_id': recording.get('pyannote_job_id')
     }
 
     # Get segments
@@ -229,7 +236,12 @@ def recording_detail(recording_id: int) -> Union[str, Tuple[str, int]]:
     # Get logs in reverse chronological order
     logs = db.get_recording_logs(recording_id, limit=200)
 
-    return render_template('recording_detail.html', recording=formatted_recording, segments=segments, logs=logs)
+    return render_template(
+        'recording_detail.html',
+        recording=formatted_recording,
+        segments=segments,
+        logs=logs
+    )
 
 
 @app.route('/api/status')
@@ -479,6 +491,26 @@ def download_recording_diarization_pyannote(recording_id: int) -> Union[Response
 
     logger.warning(f"Pyannote diarization file not found for recording {recording_id}")
     return "Pyannote diarization file not found", 404
+
+
+@app.route('/download/gemini-debug/<int:recording_id>')
+def download_gemini_debug(recording_id: int) -> Union[Response, Tuple[str, int]]:
+    """Download Gemini API response debug file."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return "Recording not found", 404
+
+    debug_path = recording['file_path'] + '.gemini_response_debug.txt'
+
+    if not os.path.exists(debug_path):
+        return "Gemini debug file not found. Run speaker refinement first.", 404
+
+    return send_file(
+        debug_path,
+        as_attachment=True,
+        download_name=f"gemini_debug_recording_{recording_id}.txt"
+    )
 
 
 @app.route('/download/diarization/gemini/<int:recording_id>')
@@ -783,29 +815,68 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
     # Download video in background thread
     def download_video() -> None:
         """Background task to download the video."""
-        try:
-            logger.info(f"Starting VOD download for recording {recording_id} from {escriba_url}")
+        max_retries = 3
+        retry_count = 0
+        last_error = None
 
-            # Download the video
-            vod_service.download_vod(escriba_url, output_path)
+        while retry_count < max_retries:
+            try:
+                if retry_count > 0:
+                    logger.info(f"Retry {retry_count}/{max_retries} for recording {recording_id}")
+                else:
+                    logger.info(f"Starting VOD download for recording {recording_id} from {escriba_url}")
 
-            # Update recording to completed (file size and duration are calculated by update_recording)
-            db.update_recording(
-                recording_id,
-                datetime.now(CALGARY_TZ),
-                'completed'
-            )
+                # Download the video
+                vod_service.download_vod(escriba_url, output_path, recording_id)
 
-            logger.info(f"VOD download completed for recording {recording_id}")
+                # Update recording to completed (file size and duration are calculated by update_recording)
+                db.update_recording(
+                    recording_id,
+                    datetime.now(CALGARY_TZ),
+                    'completed'
+                )
 
-        except Exception as e:
-            logger.error(f"VOD download failed for recording {recording_id}: {e}", exc_info=True)
-            db.update_recording(
-                recording_id,
-                datetime.now(CALGARY_TZ),
-                'failed',
-                error_message=str(e)
-            )
+                logger.info(f"VOD download completed for recording {recording_id}")
+
+                # Automatically run post-processing if enabled
+                from config import ENABLE_POST_PROCESSING, POST_PROCESS_SILENCE_THRESHOLD_DB, POST_PROCESS_MIN_SILENCE_DURATION
+                if ENABLE_POST_PROCESSING and post_processor_service:
+                    logger.info(f"Starting post-processing for recording {recording_id}")
+                    db.add_recording_log(recording_id, "Starting automatic post-processing", 'info')
+                    try:
+                        result = post_processor_service.process_recording(output_path, recording_id)
+                        if result.get('success'):
+                            logger.info(f"Post-processing completed for recording {recording_id}")
+                            db.add_recording_log(recording_id, "Post-processing completed successfully", 'info')
+                        else:
+                            logger.warning(f"Post-processing failed for recording {recording_id}: {result.get('error')}")
+                            db.add_recording_log(recording_id, f"Post-processing failed: {result.get('error')}", 'warning')
+                    except Exception as pp_error:
+                        logger.error(f"Post-processing error for recording {recording_id}: {pp_error}", exc_info=True)
+                        db.add_recording_log(recording_id, f"Post-processing error: {str(pp_error)}", 'error')
+
+                return
+
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                logger.warning(f"VOD download attempt {retry_count} failed for recording {recording_id}: {e}")
+                db.add_recording_log(recording_id, f"Download attempt {retry_count}/{max_retries} failed: {str(e)}", 'error')
+
+                if retry_count < max_retries:
+                    wait_time = 5 * retry_count
+                    db.add_recording_log(recording_id, f"Retrying in {wait_time} seconds...", 'info')
+                    time.sleep(wait_time)  # Exponential backoff: 5s, 10s, 15s
+
+        # All retries failed
+        logger.error(f"VOD download failed for recording {recording_id} after {max_retries} attempts: {last_error}", exc_info=True)
+        db.add_recording_log(recording_id, f"All {max_retries} download attempts failed", 'error')
+        db.update_recording(
+            recording_id,
+            datetime.now(CALGARY_TZ),
+            'failed',
+            error_message=f"Failed after {max_retries} attempts: {str(last_error)}"
+        )
 
     # Start background download thread
     thread = threading.Thread(target=download_video, daemon=True)
@@ -816,6 +887,235 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
         'recording_id': recording_id,
         'meeting_title': meeting_info['title'],
         'message': 'Video download started'
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/progress', methods=['GET'])
+def get_recording_progress(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """Get download progress for a recording.
+
+    Returns:
+        {
+            "success": true/false,
+            "progress": int (0-100),
+            "status": str,
+            "message": str
+        }
+    """
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({
+            'success': False,
+            'message': 'Recording not found'
+        }), 404
+
+    return jsonify({
+        'success': True,
+        'progress': recording.get('download_progress', 0),
+        'speed': recording.get('download_speed'),
+        'status': recording['status']
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/retry-download', methods=['POST'])
+def retry_vod_download(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """Retry downloading a failed VOD recording.
+
+    Returns:
+        {
+            "success": true/false,
+            "message": str
+        }
+    """
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({
+            'success': False,
+            'message': 'Recording not found'
+        }), 404
+
+    if recording['status'] not in ['failed', 'error']:
+        return jsonify({
+            'success': False,
+            'message': f'Can only retry failed recordings. Current status: {recording["status"]}'
+        }), 400
+
+    # Get the Escriba URL from stream_url field
+    escriba_url = recording.get('stream_url')
+    if not escriba_url:
+        return jsonify({
+            'success': False,
+            'message': 'No source URL found for this recording'
+        }), 400
+
+    # Initialize VOD service
+    vod_service = VodService()
+
+    # Validate URL
+    if not vod_service.validate_escriba_url(escriba_url):
+        return jsonify({
+            'success': False,
+            'message': 'Invalid Escriba URL'
+        }), 400
+
+    output_path = recording['file_path']
+
+    # Update status to downloading
+    db.update_recording(
+        recording_id,
+        datetime.now(CALGARY_TZ),
+        'downloading',
+        error_message=None
+    )
+
+    # Download video in background thread with retry logic
+    def download_video() -> None:
+        """Background task to download the video."""
+        max_retries = 3
+        retry_count = 0
+        last_error = None
+
+        while retry_count < max_retries:
+            try:
+                if retry_count > 0:
+                    logger.info(f"Retry {retry_count}/{max_retries} for recording {recording_id}")
+                    db.add_recording_log(recording_id, f"Retry attempt {retry_count}/{max_retries}", 'info')
+                else:
+                    logger.info(f"Starting VOD download retry for recording {recording_id} from {escriba_url}")
+                    db.add_recording_log(recording_id, "Manual retry initiated by user", 'info')
+
+                # Download the video
+                vod_service.download_vod(escriba_url, output_path, recording_id)
+
+                # Update recording to completed
+                db.update_recording(
+                    recording_id,
+                    datetime.now(CALGARY_TZ),
+                    'completed'
+                )
+
+                logger.info(f"VOD download completed for recording {recording_id}")
+                db.add_recording_log(recording_id, "Download completed successfully", 'info')
+                return
+
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                logger.warning(f"VOD download attempt {retry_count} failed for recording {recording_id}: {e}")
+                db.add_recording_log(recording_id, f"Download attempt {retry_count}/{max_retries} failed: {str(e)}", 'error')
+
+                if retry_count < max_retries:
+                    wait_time = 5 * retry_count
+                    db.add_recording_log(recording_id, f"Retrying in {wait_time} seconds...", 'info')
+                    time.sleep(wait_time)  # Exponential backoff
+
+        # All retries failed
+        logger.error(f"VOD download failed for recording {recording_id} after {max_retries} attempts: {last_error}", exc_info=True)
+        db.add_recording_log(recording_id, f"All {max_retries} download attempts failed", 'error')
+        db.update_recording(
+            recording_id,
+            datetime.now(CALGARY_TZ),
+            'failed',
+            error_message=f"Failed after {max_retries} attempts: {str(last_error)}"
+        )
+
+    # Start background download thread
+    thread = threading.Thread(target=download_video, daemon=True)
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'message': 'Download retry started'
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>', methods=['GET'])
+def api_get_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to get recording details."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    return jsonify({'success': True, 'recording': recording})
+
+
+@app.route('/api/recordings/<int:recording_id>/logs', methods=['GET'])
+def api_get_recording_logs(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to get recording logs."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    # Get 'since' parameter to only fetch new logs
+    since_id = request.args.get('since', 0, type=int)
+
+    # Fetch logs after the given ID
+    all_logs = db.get_recording_logs(recording_id, limit=500)
+    new_logs = [log for log in all_logs if log['id'] > since_id]
+
+    return jsonify({'success': True, 'logs': new_logs})
+
+
+@app.route('/api/recordings/<int:recording_id>/postprocess', methods=['POST'])
+def api_postprocess_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to trigger post-processing (segmentation) for a recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    if recording['status'] != 'completed':
+        return jsonify({'success': False, 'error': 'Recording must be completed before post-processing'}), 400
+
+    # Check if already segmented
+    if recording.get('is_segmented'):
+        return jsonify({'success': False, 'error': 'Recording has already been segmented'}), 400
+
+    # Check if already post-processing
+    if recording.get('post_process_status') == 'processing':
+        return jsonify({'success': False, 'error': 'Recording is already being post-processed'}), 400
+
+    if not os.path.exists(recording['file_path']):
+        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
+
+    # Check if post-processor is available
+    if not post_processor_service:
+        return jsonify({'success': False, 'error': 'Post-processor service not available'}), 500
+
+    # Update status to 'processing'
+    db.update_post_process_status(recording_id, 'processing')
+
+    # Run post-processing in background thread
+    def run_postprocessing() -> None:
+        """Background task to post-process the recording."""
+        try:
+            logger.info(f"Starting post-processing for recording {recording_id}")
+            db.add_recording_log(recording_id, "Starting post-processing", 'info')
+
+            result = post_processor_service.process_recording(recording['file_path'], recording_id)
+
+            if result.get('success'):
+                logger.info(f"Post-processing completed for recording {recording_id}")
+                db.add_recording_log(recording_id, "Post-processing completed successfully", 'info')
+            else:
+                logger.warning(f"Post-processing failed for recording {recording_id}: {result.get('error')}")
+                db.add_recording_log(recording_id, f"Post-processing failed: {result.get('error')}", 'error')
+
+        except Exception as e:
+            logger.error(f"Post-processing error for recording {recording_id}: {e}", exc_info=True)
+            db.update_post_process_status(recording_id, 'failed', str(e))
+            db.add_recording_log(recording_id, f"Post-processing error: {str(e)}", 'error')
+
+    thread = threading.Thread(target=run_postprocessing, daemon=True)
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'message': 'Post-processing started'
     })
 
 
@@ -830,20 +1130,23 @@ def api_transcribe_recording(recording_id: int) -> Union[Response, Tuple[Respons
     if recording['status'] != 'completed':
         return jsonify({'success': False, 'error': 'Recording must be completed before transcription'}), 400
 
-    # Check if already transcribing
-    if recording.get('transcription_status') == 'processing':
-        return jsonify({'success': False, 'error': 'Recording is already being transcribed'}), 400
-
     if not os.path.exists(recording['file_path']):
         return jsonify({'success': False, 'error': 'Recording file not found'}), 404
 
-    # Update status to 'processing' before starting thread to prevent race condition
+    # Allow re-running transcription even if previously completed or processing
+    # The transcription service will check individual step status and skip completed steps
+    # This enables:
+    # 1. Re-running failed steps
+    # 2. Running missing steps (e.g., just diarization if Whisper already done)
+    # 3. Parallel execution where steps don't depend on each other
+
+    # Update status to 'processing' before starting thread
     db.update_transcription_status(recording_id, 'processing')
 
     # Run transcription in background thread
     def run_transcription() -> None:
         from transcription_service import TranscriptionService
-        from config import PYANNOTE_API_TOKEN, ENABLE_TRANSCRIPTION
+        from config import PYANNOTE_API_TOKEN, PYANNOTE_SEGMENTATION_THRESHOLD, ENABLE_TRANSCRIPTION
 
         if not ENABLE_TRANSCRIPTION:
             db.update_transcription_status(recording_id, 'skipped', 'Transcription disabled in config')
@@ -855,7 +1158,10 @@ def api_transcribe_recording(recording_id: int) -> Union[Response, Tuple[Respons
             db.add_transcription_log(recording_id, 'Starting transcription process', 'info')
             db.add_recording_log(recording_id, 'Starting transcription process', 'info')
 
-            transcription_service = TranscriptionService(pyannote_api_token=PYANNOTE_API_TOKEN)
+            transcription_service = TranscriptionService(
+                pyannote_api_token=PYANNOTE_API_TOKEN,
+                pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
+            )
 
             # Check if recording has segments
             segments = db.get_segments_by_recording(recording_id)
@@ -939,6 +1245,531 @@ def api_transcribe_recording(recording_id: int) -> Union[Response, Tuple[Respons
     thread.start()
 
     return jsonify({'success': True, 'message': 'Transcription started'})
+
+
+@app.route('/api/recordings/<int:recording_id>/extract-audio', methods=['POST'])
+def api_extract_audio(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to extract WAV audio from recording."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    if recording['status'] != 'completed':
+        return jsonify({'success': False, 'error': 'Recording must be completed'}), 400
+
+    video_path = recording['file_path']
+    if not os.path.exists(video_path):
+        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
+
+    def run_extraction() -> None:
+        from transcription_service import TranscriptionService
+        try:
+            db.add_recording_log(recording_id, 'Starting audio extraction', 'info')
+            db.update_transcription_step(recording_id, 'extraction', 'processing')
+
+            service = TranscriptionService()
+            wav_path = service.extract_audio_to_wav(video_path, recording_id=recording_id)
+
+            db.update_wav_path(recording_id, wav_path)
+            db.update_transcription_step(recording_id, 'extraction', 'completed', {'wav_path': wav_path})
+            db.add_recording_log(recording_id, f'Audio extracted: {wav_path}', 'info')
+            logger.info(f"Audio extraction completed for recording {recording_id}")
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Audio extraction failed for recording {recording_id}: {error_msg}", exc_info=True)
+            db.update_transcription_step(recording_id, 'extraction', 'failed', {'error': error_msg})
+            db.add_recording_log(recording_id, f'Audio extraction failed: {error_msg}', 'error')
+
+    thread = threading.Thread(target=run_extraction, daemon=True)
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Audio extraction started'})
+
+
+@app.route('/api/recordings/<int:recording_id>/run-diarization', methods=['POST'])
+def api_run_diarization(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to run transcription + diarization (pyannote STT orchestration)."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    if recording['status'] != 'completed':
+        return jsonify({'success': False, 'error': 'Recording must be completed'}), 400
+
+    video_path = recording['file_path']
+    if not os.path.exists(video_path):
+        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
+
+    def run_diarization() -> None:
+        from transcription_service import TranscriptionService
+        from config import PYANNOTE_API_TOKEN, PYANNOTE_SEGMENTATION_THRESHOLD
+        try:
+            db.add_recording_log(recording_id, 'Starting transcription + diarization', 'info')
+            db.update_transcription_step(recording_id, 'diarization', 'processing')
+
+            service = TranscriptionService(
+                pyannote_api_token=PYANNOTE_API_TOKEN,
+                pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
+            )
+
+            # Extract audio if not already done
+            wav_path = recording.get('wav_path')
+            if not wav_path or not os.path.exists(wav_path):
+                db.add_recording_log(recording_id, 'Extracting audio first', 'info')
+                wav_path = service.extract_audio_to_wav(video_path, recording_id=recording_id)
+                db.update_wav_path(recording_id, wav_path)
+
+            # Run pyannote for transcription + diarization
+            diarization_segments = service.perform_diarization(wav_path, recording_id=recording_id)
+
+            # Save diarization output
+            pyannote_path = video_path + '.diarization.pyannote.json'
+            pyannote_data = {
+                'file': video_path,
+                'segments': diarization_segments,
+                'num_speakers': len(set(seg['speaker'] for seg in diarization_segments)) if diarization_segments else 0
+            }
+            with open(pyannote_path, 'w', encoding='utf-8') as f:
+                json.dump(pyannote_data, f, indent=2, ensure_ascii=False)
+
+            # Also save to database path
+            db.update_diarization_path(recording_id, pyannote_path, source='pyannote')
+            db.update_transcription_step(recording_id, 'diarization', 'completed', {'output_path': pyannote_path})
+            db.add_recording_log(recording_id, f'Transcription + diarization completed: {pyannote_path}', 'info')
+            logger.info(f"Transcription + diarization completed for recording {recording_id}")
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Diarization failed for recording {recording_id}: {error_msg}", exc_info=True)
+            db.update_transcription_step(recording_id, 'diarization', 'failed', {'error': error_msg})
+            db.add_recording_log(recording_id, f'Diarization failed: {error_msg}', 'error')
+
+    thread = threading.Thread(target=run_diarization, daemon=True)
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Transcription + diarization started'})
+
+
+@app.route('/api/recordings/<int:recording_id>/run-gemini-refinement', methods=['POST'])
+def api_run_gemini_refinement(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to run only Gemini speaker refinement (requires prior diarization)."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    if recording['status'] != 'completed':
+        return jsonify({'success': False, 'error': 'Recording must be completed'}), 400
+
+    video_path = recording['file_path']
+    if not os.path.exists(video_path):
+        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
+
+    # Verify diarization is completed (required for Gemini refinement)
+    pyannote_path = video_path + '.diarization.pyannote.json'
+    if not os.path.exists(pyannote_path):
+        return jsonify({
+            'success': False,
+            'error': 'Diarization must be completed before running Gemini refinement. Run "Transcription + Diarization" step first.'
+        }), 400
+
+    def run_gemini_refinement() -> None:
+        from transcription_service import TranscriptionService
+        from config import ENABLE_GEMINI_REFINEMENT, GEMINI_API_KEY, GEMINI_MODEL
+
+        # Create task ID and register with task manager
+        task_id = f"gemini_refinement_{recording_id}_{int(time.time())}"
+        task_manager.start_task(
+            task_id=task_id,
+            recording_id=recording_id,
+            task_type='gemini_refinement',
+            description=f'Speaker Refinement for Recording #{recording_id}'
+        )
+
+        try:
+            if not ENABLE_GEMINI_REFINEMENT:
+                db.add_recording_log(recording_id, 'Gemini refinement is disabled in config', 'warning')
+                task_manager.complete_task(task_id, error='Gemini refinement is disabled in config')
+                return
+
+            db.add_recording_log(recording_id, 'Starting Gemini speaker refinement', 'info')
+            db.update_transcription_step(recording_id, 'gemini', 'processing')
+            task_manager.update_progress(task_id, 'Loading diarization data')
+
+            # Load pyannote diarization
+            with open(pyannote_path, 'r', encoding='utf-8') as f:
+                pyannote_data = json.load(f)
+
+            # Get meeting context
+            meeting_link = None
+            meeting_title = "Council Meeting"
+            expected_speakers = []
+
+            if recording.get('meeting_id'):
+                with db.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT title, link FROM meetings WHERE id = ?",
+                        (recording['meeting_id'],)
+                    )
+                    meeting_row = cursor.fetchone()
+                    if meeting_row:
+                        meeting_title = meeting_row['title'] or meeting_title
+                        meeting_link = meeting_row['link']
+
+                # Get expected speakers from database
+                expected_speakers = db.get_recording_speakers(recording_id)
+
+                # If no speakers in database, try extracting from agenda
+                if not expected_speakers and meeting_link:
+                    try:
+                        import agenda_parser
+                        expected_speakers = agenda_parser.extract_speakers(meeting_link)
+                        if expected_speakers:
+                            db.update_recording_speakers(recording_id, expected_speakers)
+                            db.add_recording_log(recording_id, f'Extracted {len(expected_speakers)} speakers from agenda', 'info')
+                    except Exception as e:
+                        logger.warning(f"Could not extract speakers from agenda: {e}")
+
+            # Call Gemini refinement
+            task_manager.update_progress(task_id, f'Calling Gemini API to refine {len(pyannote_data.get("segments", []))} segments...')
+            from gemini_service import refine_diarization
+            gemini_transcript = refine_diarization(
+                merged_transcript=pyannote_data,
+                expected_speakers=expected_speakers,
+                meeting_title=meeting_title,
+                api_key=GEMINI_API_KEY,
+                model=GEMINI_MODEL
+            )
+
+            # Check if Gemini actually refined the transcript
+            if gemini_transcript.get('refined_by') != 'gemini':
+                # Gemini did not refine (skipped or failed)
+                error_msg = "Gemini refinement was skipped or failed to refine speakers"
+
+                # Check for common reasons
+                num_segments = len(pyannote_data.get('segments', []))
+                if num_segments > 5000:
+                    error_msg = f"Meeting too large for Gemini refinement ({num_segments} segments, limit is 5000). Consider implementing chunking for large meetings."
+                elif not expected_speakers:
+                    error_msg = "No speaker list available - Gemini needs context from meeting agenda. Fetch speakers first."
+
+                db.add_recording_log(recording_id, error_msg, 'warning')
+                db.update_transcription_step(recording_id, 'gemini', 'skipped', {'reason': error_msg})
+                logger.warning(error_msg)
+                task_manager.complete_task(task_id, error=error_msg)
+                return  # Don't save gemini.json if not actually refined
+
+            task_manager.update_progress(task_id, 'Saving refined transcript')
+
+            # Save Gemini-refined transcript (only if actually refined)
+            gemini_path = video_path + '.diarization.gemini.json'
+            with open(gemini_path, 'w', encoding='utf-8') as f:
+                json.dump(gemini_transcript, f, indent=2, ensure_ascii=False)
+
+            # Extract unique speakers from refined transcript
+            refined_speakers = set()
+            for segment in gemini_transcript.get('segments', []):
+                speaker = segment.get('speaker')
+                if speaker and not speaker.startswith('SPEAKER_'):
+                    # Only include refined speakers (not generic SPEAKER_XX)
+                    refined_speakers.add(speaker)
+
+            # Update database with refined speakers list
+            if refined_speakers:
+                refined_speakers_list = [
+                    {
+                        'name': speaker,
+                        'role': speaker.split()[0] if ' ' in speaker else 'Unknown',  # Extract title (Mayor, Councillor, etc.)
+                        'confidence': 'high'  # Gemini-refined speakers are high confidence
+                    }
+                    for speaker in sorted(refined_speakers)
+                ]
+                db.update_recording_speakers(recording_id, refined_speakers_list)
+                db.add_recording_log(
+                    recording_id,
+                    f'Updated speaker list with {len(refined_speakers_list)} refined speakers: {", ".join(sorted(refined_speakers))}',
+                    'info'
+                )
+
+            # Update database - set gemini path while preserving pyannote path
+            db.update_recording_diarization_paths(recording_id, pyannote_path=pyannote_path, gemini_path=gemini_path)
+            db.update_transcription_step(recording_id, 'gemini', 'completed', {'output_path': gemini_path})
+            db.add_recording_log(recording_id, f'Gemini speaker refinement completed: {gemini_path}', 'info')
+            logger.info(f"Gemini speaker refinement completed for recording {recording_id}")
+            task_manager.complete_task(task_id)
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Gemini refinement failed for recording {recording_id}: {error_msg}", exc_info=True)
+            db.update_transcription_step(recording_id, 'gemini', 'failed', {'error': error_msg})
+            db.add_recording_log(recording_id, f'Gemini refinement failed: {error_msg}', 'error')
+            task_manager.complete_task(task_id, error=error_msg)
+
+    # Generate task ID before starting thread
+    task_id = f"gemini_refinement_{recording_id}_{int(time.time())}"
+
+    # Store task_id in a way the thread can access it
+    def run_with_task_id():
+        nonlocal task_id
+        task_manager.start_task(
+            task_id=task_id,
+            recording_id=recording_id,
+            task_type='gemini_refinement',
+            description=f'Speaker Refinement for Recording #{recording_id}'
+        )
+        # Move the run_gemini_refinement logic here with task_id in scope
+        from transcription_service import TranscriptionService
+        from config import ENABLE_GEMINI_REFINEMENT, GEMINI_API_KEY, GEMINI_MODEL
+
+        try:
+            if not ENABLE_GEMINI_REFINEMENT:
+                db.add_recording_log(recording_id, 'Gemini refinement is disabled in config', 'warning')
+                task_manager.complete_task(task_id, error='Gemini refinement is disabled in config')
+                return
+
+            db.add_recording_log(recording_id, 'Starting Gemini speaker refinement', 'info')
+            db.update_transcription_step(recording_id, 'gemini', 'processing')
+            task_manager.update_progress(task_id, 'Loading diarization data')
+
+            # Load pyannote diarization
+            with open(pyannote_path, 'r', encoding='utf-8') as f:
+                pyannote_data = json.load(f)
+
+            # Get meeting context
+            meeting_link = None
+            meeting_title = "Council Meeting"
+            expected_speakers = []
+
+            if recording.get('meeting_id'):
+                with db.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT title, link FROM meetings WHERE id = ?",
+                        (recording['meeting_id'],)
+                    )
+                    meeting_row = cursor.fetchone()
+                    if meeting_row:
+                        meeting_title = meeting_row['title'] or meeting_title
+                        meeting_link = meeting_row['link']
+
+                # Get expected speakers from database
+                expected_speakers = db.get_recording_speakers(recording_id)
+
+                # If no speakers in database, try extracting from agenda
+                if not expected_speakers and meeting_link:
+                    try:
+                        import agenda_parser
+                        expected_speakers = agenda_parser.extract_speakers(meeting_link)
+                        if expected_speakers:
+                            db.update_recording_speakers(recording_id, expected_speakers)
+                            db.add_recording_log(recording_id, f'Extracted {len(expected_speakers)} speakers from agenda', 'info')
+                    except Exception as e:
+                        logger.warning(f"Could not extract speakers from agenda: {e}")
+
+            # Call Gemini refinement
+            task_manager.update_progress(task_id, f'Calling Gemini API to refine {len(pyannote_data.get("segments", []))} segments...')
+            from gemini_service import refine_diarization
+            gemini_transcript = refine_diarization(
+                merged_transcript=pyannote_data,
+                expected_speakers=expected_speakers,
+                meeting_title=meeting_title,
+                api_key=GEMINI_API_KEY,
+                model=GEMINI_MODEL
+            )
+
+            # Check if Gemini actually refined the transcript
+            if gemini_transcript.get('refined_by') != 'gemini':
+                # Gemini did not refine (skipped or failed)
+                error_msg = "Gemini refinement was skipped or failed to refine speakers"
+
+                # Check for common reasons
+                num_segments = len(pyannote_data.get('segments', []))
+                if num_segments > 5000:
+                    error_msg = f"Meeting too large for Gemini refinement ({num_segments} segments, limit is 5000). Consider implementing chunking for large meetings."
+                elif not expected_speakers:
+                    error_msg = "No speaker list available - Gemini needs context from meeting agenda. Fetch speakers first."
+
+                db.add_recording_log(recording_id, error_msg, 'warning')
+                db.update_transcription_step(recording_id, 'gemini', 'skipped', {'reason': error_msg})
+                logger.warning(error_msg)
+                task_manager.complete_task(task_id, error=error_msg)
+                return  # Don't save gemini.json if not actually refined
+
+            task_manager.update_progress(task_id, 'Saving refined transcript')
+
+            # Save Gemini-refined transcript (only if actually refined)
+            gemini_path = video_path + '.diarization.gemini.json'
+            with open(gemini_path, 'w', encoding='utf-8') as f:
+                json.dump(gemini_transcript, f, indent=2, ensure_ascii=False)
+
+            # Extract unique speakers from refined transcript
+            refined_speakers = set()
+            for segment in gemini_transcript.get('segments', []):
+                speaker = segment.get('speaker')
+                if speaker and not speaker.startswith('SPEAKER_'):
+                    # Only include refined speakers (not generic SPEAKER_XX)
+                    refined_speakers.add(speaker)
+
+            # Update database with refined speakers list
+            if refined_speakers:
+                refined_speakers_list = [
+                    {
+                        'name': speaker,
+                        'role': speaker.split()[0] if ' ' in speaker else 'Unknown',  # Extract title (Mayor, Councillor, etc.)
+                        'confidence': 'high'  # Gemini-refined speakers are high confidence
+                    }
+                    for speaker in sorted(refined_speakers)
+                ]
+                db.update_recording_speakers(recording_id, refined_speakers_list)
+                db.add_recording_log(
+                    recording_id,
+                    f'Updated speaker list with {len(refined_speakers_list)} refined speakers: {", ".join(sorted(refined_speakers))}',
+                    'info'
+                )
+
+            # Update database - set gemini path while preserving pyannote path
+            db.update_recording_diarization_paths(recording_id, pyannote_path=pyannote_path, gemini_path=gemini_path)
+            db.update_transcription_step(recording_id, 'gemini', 'completed', {'output_path': gemini_path})
+            db.add_recording_log(recording_id, f'Gemini speaker refinement completed: {gemini_path}', 'info')
+            logger.info(f"Gemini speaker refinement completed for recording {recording_id}")
+            task_manager.complete_task(task_id)
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Gemini refinement failed for recording {recording_id}: {error_msg}", exc_info=True)
+            db.update_transcription_step(recording_id, 'gemini', 'failed', {'error': error_msg})
+            db.add_recording_log(recording_id, f'Gemini refinement failed: {error_msg}', 'error')
+            task_manager.complete_task(task_id, error=error_msg)
+
+    thread = threading.Thread(target=run_with_task_id, daemon=True)
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'message': 'Gemini speaker refinement started',
+        'task_id': task_id
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/gemini-prompt-preview', methods=['GET'])
+def api_get_gemini_prompt_preview(recording_id: int) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to preview the prompt that would be sent to Gemini for speaker refinement."""
+    recording = db.get_recording_by_id(recording_id)
+
+    if not recording:
+        return jsonify({'success': False, 'error': 'Recording not found'}), 404
+
+    video_path = recording['file_path']
+    if not os.path.exists(video_path):
+        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
+
+    # Verify diarization is completed (required for Gemini refinement)
+    pyannote_path = video_path + '.diarization.pyannote.json'
+    if not os.path.exists(pyannote_path):
+        return jsonify({
+            'success': False,
+            'error': 'Diarization must be completed before previewing Gemini prompt. Run "Transcription + Diarization" step first.'
+        }), 400
+
+    try:
+        # Load pyannote diarization
+        with open(pyannote_path, 'r', encoding='utf-8') as f:
+            pyannote_data = json.load(f)
+
+        # Get meeting context
+        meeting_link = None
+        meeting_title = "Council Meeting"
+        expected_speakers = []
+
+        if recording.get('meeting_id'):
+            with db.get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT title, link FROM meetings WHERE id = ?",
+                    (recording['meeting_id'],)
+                )
+                meeting_row = cursor.fetchone()
+                if meeting_row:
+                    meeting_title = meeting_row['title'] or meeting_title
+                    meeting_link = meeting_row['link']
+
+            # Get expected speakers from database
+            expected_speakers = db.get_recording_speakers(recording_id)
+
+            # If no speakers in database, try extracting from agenda
+            if not expected_speakers and meeting_link:
+                try:
+                    import agenda_parser
+                    expected_speakers = agenda_parser.extract_speakers(meeting_link)
+                except Exception as e:
+                    logger.warning(f"Could not extract speakers from agenda: {e}")
+
+        # Construct the prompt using the same function Gemini service uses
+        from gemini_service import _construct_prompt
+        prompt = _construct_prompt(pyannote_data, expected_speakers, meeting_title)
+
+        # Calculate some stats
+        num_segments = len(pyannote_data.get('segments', []))
+        prompt_length = len(prompt)
+        estimated_tokens = prompt_length // 4  # Rough estimate
+
+        return jsonify({
+            'success': True,
+            'prompt': prompt,
+            'stats': {
+                'num_segments': num_segments,
+                'num_speakers': len(expected_speakers),
+                'prompt_length_chars': prompt_length,
+                'estimated_tokens': estimated_tokens
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating prompt preview: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'Failed to generate prompt preview: {str(e)}'
+        }), 500
+
+
+@app.route('/api/background-tasks', methods=['GET'])
+def api_get_background_tasks() -> Response:
+    """API endpoint to get all active and recent background tasks."""
+    tasks = task_manager.get_all_tasks()
+    return jsonify({
+        'success': True,
+        'tasks': tasks
+    })
+
+
+@app.route('/api/background-tasks/<task_id>', methods=['GET'])
+def api_get_background_task(task_id: str) -> Union[Response, Tuple[Response, int]]:
+    """API endpoint to get a specific background task by ID."""
+    tasks = task_manager.get_all_tasks()
+    task = next((t for t in tasks if t['task_id'] == task_id), None)
+
+    if not task:
+        return jsonify({
+            'success': False,
+            'error': 'Task not found'
+        }), 404
+
+    return jsonify({
+        'success': True,
+        'task': task
+    })
+
+
+@app.route('/api/recordings/<int:recording_id>/background-tasks', methods=['GET'])
+def api_get_recording_background_tasks(recording_id: int) -> Response:
+    """API endpoint to get background tasks for a specific recording."""
+    tasks = task_manager.get_recording_tasks(recording_id)
+    return jsonify({
+        'success': True,
+        'tasks': tasks
+    })
 
 
 @app.route('/api/recordings/<int:recording_id>/transcription-status', methods=['GET'])
@@ -1257,5 +2088,14 @@ def run_server(host: Optional[str] = None, port: Optional[int] = None) -> None:
 
 
 if __name__ == '__main__':
+    # Initialize post-processor if running standalone
+    if post_processor_service is None:
+        from config import POST_PROCESS_SILENCE_THRESHOLD_DB, POST_PROCESS_MIN_SILENCE_DURATION
+        post_processor_service = PostProcessor(
+            silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
+            min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION
+        )
+        logger.info("Initialized post-processor service")
+
     logger.info(f"Starting web server on http://{WEB_HOST}:{WEB_PORT}")
     run_server()

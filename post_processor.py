@@ -14,6 +14,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 import re
+import tempfile
 import database as db
 from config import CALGARY_TZ, AUDIO_DETECTION_MEAN_THRESHOLD_DB, AUDIO_DETECTION_MAX_THRESHOLD_DB
 
@@ -47,20 +48,26 @@ class PostProcessor:
 
     def detect_silent_periods(self, video_path: str, recording_id: Optional[int] = None) -> List[Tuple[float, float]]:
         """
-        Detect silent periods in the video that likely represent breaks.
+        Detect periods without speech (breaks) in the video.
+
+        Uses speech frequency filtering to detect breaks even when background music is present.
+        Filters to speech frequencies (300-3400 Hz) before silence detection, so music-only
+        periods will be detected as "silent" (no speech).
 
         Returns:
-            List of (start_time, end_time) tuples in seconds
+            List of (start_time, end_time) tuples in seconds representing breaks
         """
-        msg = f"Analyzing audio for silent periods (threshold: {self.silence_threshold_db}dB, min duration: {self.min_silence_duration}s)"
+        msg = f"Analyzing for speech breaks (speech freq filter + silence threshold: {self.silence_threshold_db}dB, min duration: {self.min_silence_duration}s)"
         self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
+        # Apply speech frequency filter BEFORE silence detection
+        # This way, music-only breaks will be detected as "silent" (no speech)
         cmd = [
             self.ffmpeg_command,
             '-i', video_path,
-            '-af', f'silencedetect=noise={self.silence_threshold_db}dB:d={self.min_silence_duration}',
+            '-af', f'highpass=f=300,lowpass=f=3400,silencedetect=noise={self.silence_threshold_db}dB:d={self.min_silence_duration}',
             '-f', 'null',
             '-'
         ]
@@ -70,7 +77,7 @@ class PostProcessor:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout for analysis
+                timeout=600  # 10 minute timeout (increased for large files)
             )
 
             # Parse silence detection output from stderr
@@ -94,7 +101,13 @@ class PostProcessor:
             for start, end in zip(silence_starts, silence_ends):
                 duration = end - start
                 silent_periods.append((start, end))
-                msg = f"Found silence: {start:.1f}s - {end:.1f}s (duration: {duration:.1f}s)"
+                msg = f"Found speech break: {start:.1f}s - {end:.1f}s (duration: {duration:.1f}s)"
+                self.logger.info(msg)
+                if recording_id:
+                    db.add_recording_log(recording_id, msg, 'info')
+
+            if not silent_periods:
+                msg = "No speech breaks detected - continuous speech throughout recording"
                 self.logger.info(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'info')
@@ -102,101 +115,200 @@ class PostProcessor:
             return silent_periods
 
         except subprocess.TimeoutExpired:
-            msg = "Analysis timed out"
+            msg = "Speech break analysis timed out - video may be very large"
             self.logger.warning(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'warning')
             return []
         except Exception as e:
-            msg = f"Error detecting silent periods: {e}"
+            msg = f"Error detecting speech breaks: {e}"
             self.logger.error(msg, exc_info=True)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'error')
             return []
 
-    def has_audio(self, video_path: str, recording_id: Optional[int] = None) -> bool:
+    def _parse_volume_output(self, stderr_output: str) -> Tuple[Optional[float], Optional[float]]:
         """
-        Check if the recording has any actual audio content (not just silence).
+        Parse mean and max volume from ffmpeg volumedetect output.
+
+        Args:
+            stderr_output: stderr from ffmpeg volumedetect command
 
         Returns:
-            True if audio is detected, False if entire file is silent/no audio
+            Tuple of (mean_volume, max_volume) in dB, or (None, None) if not found
         """
-        msg = "Checking for audio content in entire file"
+        mean_volume = None
+        max_volume = None
+
+        for line in stderr_output.split('\n'):
+            if 'mean_volume:' in line:
+                try:
+                    mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
+                except (ValueError, IndexError):
+                    pass
+            if 'max_volume:' in line:
+                try:
+                    max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
+                except (ValueError, IndexError):
+                    pass
+
+        return mean_volume, max_volume
+
+    def _detect_speech_in_sample(self, video_path: str, position: float, duration: int,
+                                   recording_id: Optional[int] = None) -> bool:
+        """
+        Detect if a sample contains human speech (not just music or noise).
+
+        Uses ffmpeg to extract audio and analyze speech characteristics:
+        - Applies highpass/lowpass filters to isolate speech frequencies (300-3400 Hz)
+        - Checks for sufficient volume in the speech frequency range
+
+        Args:
+            video_path: Path to video file
+            position: Start position in seconds
+            duration: Sample duration in seconds
+            recording_id: Optional recording ID for logging
+
+        Returns:
+            True if speech is detected, False otherwise
+        """
+        # Extract audio sample and filter for speech frequencies
+        # Human speech is primarily 300-3400 Hz, music has much wider range
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_audio:
+            temp_path = temp_audio.name
+
+        try:
+            # Extract audio with speech frequency filter
+            extract_cmd = [
+                self.ffmpeg_command,
+                '-ss', str(position),
+                '-i', video_path,
+                '-t', str(duration),
+                '-af', 'highpass=f=300,lowpass=f=3400,volume=2.0',  # Speech frequency range
+                '-ar', '16000',  # 16kHz sample rate sufficient for speech
+                '-ac', '1',  # Mono
+                '-y',  # Overwrite
+                temp_path
+            ]
+
+            result = subprocess.run(
+                extract_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if result.returncode != 0 or not os.path.exists(temp_path):
+                return False
+
+            # Check if filtered audio has significant volume (indicates speech)
+            volume_cmd = [
+                self.ffmpeg_command,
+                '-i', temp_path,
+                '-af', 'volumedetect',
+                '-f', 'null',
+                '-'
+            ]
+
+            volume_result = subprocess.run(
+                volume_cmd,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            mean_volume, max_volume = self._parse_volume_output(volume_result.stderr)
+
+            # If speech frequencies have significant volume, likely contains speech
+            # Use more lenient thresholds since we've already filtered to speech range
+            if mean_volume and max_volume:
+                speech_detected = mean_volume > -50 and max_volume > -30
+                return speech_detected
+
+            return False
+
+        except Exception as e:
+            self.logger.debug(f"Speech detection error: {e}")
+            return False
+        finally:
+            # Clean up temp file
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except:
+                pass
+
+    def has_audio(self, video_path: str, recording_id: Optional[int] = None) -> bool:
+        """
+        Check if the recording has any actual speech content (not just music/silence).
+
+        Uses interval sampling with speech detection: analyzes 2 minutes every 30 minutes.
+        Specifically detects human speech frequencies (300-3400 Hz) to ignore background music.
+
+        Returns:
+            True if speech is detected in any sample, False if no speech found
+        """
+        duration = self.get_video_duration(video_path, recording_id)
+        if duration == 0:
+            msg = "Could not determine video duration"
+            self.logger.warning(msg)
+            if recording_id:
+                db.add_recording_log(recording_id, msg, 'warning')
+            return True  # Assume has audio if we can't check
+
+        # Sample every 30 minutes, taking 2 minutes at each position
+        sample_interval = 30 * 60  # 30 minutes in seconds
+        sample_duration = 120  # 2 minutes
+
+        sample_positions = []
+        position = 0
+        while position < duration:
+            sample_positions.append(position)
+            position += sample_interval
+
+        # Always sample the end if not already covered
+        if len(sample_positions) == 0 or duration - sample_positions[-1] > sample_duration:
+            sample_positions.append(max(0, duration - sample_duration))
+
+        msg = f"Checking for speech in {len(sample_positions)} positions (2min each, every 30min)"
         self.logger.info(msg)
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
-        cmd = [
-            self.ffmpeg_command,
-            '-i', video_path,
-            '-af', 'volumedetect',
-            '-f', 'null',
-            '-'
-        ]
+        for i, position in enumerate(sample_positions, 1):
+            try:
+                # Use speech detection instead of simple volume detection
+                has_speech = self._detect_speech_in_sample(video_path, position, sample_duration, recording_id)
 
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout for analysis
-            )
+                if has_speech:
+                    msg = f"Speech detected in sample {i}/{len(sample_positions)} at {position:.0f}s"
+                    self.logger.info(msg)
+                    if recording_id:
+                        db.add_recording_log(recording_id, msg, 'info')
+                    return True
+                else:
+                    msg = f"Sample {i}/{len(sample_positions)} at {position:.0f}s: No speech detected (may have music/silence)"
+                    self.logger.debug(msg)
 
-            # Parse audio volume from output
-            mean_volume = None
-            max_volume = None
-
-            for line in result.stderr.split('\n'):
-                if 'mean_volume:' in line:
-                    try:
-                        mean_volume = float(line.split('mean_volume:')[1].split('dB')[0].strip())
-                    except (ValueError, IndexError):
-                        # Ignore parsing errors in ffmpeg output; leave mean_volume as None
-                        pass
-                if 'max_volume:' in line:
-                    try:
-                        max_volume = float(line.split('max_volume:')[1].split('dB')[0].strip())
-                    except (ValueError, IndexError):
-                        # Ignore parsing errors in ffmpeg output; leave max_volume as None
-                        pass
-
-            # If we couldn't detect audio levels or they're extremely low, no audio
-            if mean_volume is None and max_volume is None:
-                msg = "No audio stream detected"
+            except subprocess.TimeoutExpired:
+                msg = f"Sample {i}/{len(sample_positions)} timed out, continuing with next sample"
                 self.logger.warning(msg)
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'warning')
-                return False
+                continue
+            except Exception as e:
+                msg = f"Error analyzing sample {i}/{len(sample_positions)}: {e}"
+                self.logger.error(msg, exc_info=True)
+                if recording_id:
+                    db.add_recording_log(recording_id, msg, 'error')
+                continue
 
-            msg = f"Audio levels - Mean: {mean_volume}dB, Max: {max_volume}dB"
-            self.logger.info(msg)
-            if recording_id:
-                db.add_recording_log(recording_id, msg, 'info')
-
-            # If audio is very quiet, likely no real audio
-            # Use same thresholds as static detection for consistency
-            if mean_volume and max_volume:
-                if mean_volume < AUDIO_DETECTION_MEAN_THRESHOLD_DB or max_volume < AUDIO_DETECTION_MAX_THRESHOLD_DB:
-                    msg = "Audio levels too low - appears to be silent recording"
-                    self.logger.warning(msg)
-                    if recording_id:
-                        db.add_recording_log(recording_id, msg, 'warning')
-                    return False
-
-            return True
-
-        except subprocess.TimeoutExpired:
-            msg = "Audio detection timed out"
-            self.logger.warning(msg)
-            if recording_id:
-                db.add_recording_log(recording_id, msg, 'warning')
-            return True  # Assume has audio if check fails
-        except Exception as e:
-            msg = f"Error detecting audio: {e}"
-            self.logger.error(msg, exc_info=True)
-            if recording_id:
-                db.add_recording_log(recording_id, msg, 'error')
-            return True  # Assume has audio if check fails
+        # All samples were checked and none had speech
+        msg = "No speech detected in any sample - appears to be recording without voices"
+        self.logger.warning(msg)
+        if recording_id:
+            db.add_recording_log(recording_id, msg, 'warning')
+        return False
 
     def get_video_duration(self, video_path: str, recording_id: Optional[int] = None) -> float:
         """Get total duration of video in seconds."""
@@ -348,13 +460,92 @@ class PostProcessor:
             self.logger.error(f"Error extracting segment: {e}", exc_info=True)
             return False
 
-    def process_recording(self, recording_path: str, recording_id: Optional[int] = None) -> Dict:
+    def extract_wav(self, recording_path: str, recording_id: Optional[int] = None) -> Optional[str]:
         """
-        Process a recording: detect breaks and split into segments.
+        Extract WAV audio from video recording for transcription.
 
         Args:
             recording_path: Path to the original recording file
-            recording_id: Optional database recording ID to track segments
+            recording_id: Optional database recording ID for logging
+
+        Returns:
+            Path to extracted WAV file, or None if extraction failed
+        """
+        base_name = os.path.splitext(recording_path)[0]
+        wav_path = f"{base_name}.wav"
+
+        # Skip if WAV already exists
+        if os.path.exists(wav_path):
+            msg = f"WAV file already exists: {wav_path}"
+            self.logger.info(msg)
+            if recording_id:
+                db.add_recording_log(recording_id, msg, 'info')
+            return wav_path
+
+        msg = "Extracting audio to WAV format (16kHz mono for transcription)"
+        self.logger.info(msg)
+        if recording_id:
+            db.add_recording_log(recording_id, msg, 'info')
+
+        cmd = [
+            self.ffmpeg_command,
+            '-i', recording_path,
+            '-ar', '16000',  # 16kHz sample rate (sufficient for speech)
+            '-ac', '1',      # Mono
+            '-c:a', 'pcm_s16le',  # 16-bit PCM
+            '-y',  # Overwrite if exists
+            wav_path
+        ]
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600  # 1 hour timeout for large files
+            )
+
+            if result.returncode != 0:
+                msg = f"FFmpeg error: {result.stderr}"
+                self.logger.error(msg)
+                if recording_id:
+                    db.add_recording_log(recording_id, msg, 'error')
+                return None
+
+            if os.path.exists(wav_path):
+                file_size_mb = os.path.getsize(wav_path) / (1024**2)
+                msg = f"WAV extracted successfully: {wav_path} ({file_size_mb:.1f} MB)"
+                self.logger.info(msg)
+                if recording_id:
+                    db.add_recording_log(recording_id, msg, 'info')
+                return wav_path
+            else:
+                msg = "WAV file was not created"
+                self.logger.error(msg)
+                if recording_id:
+                    db.add_recording_log(recording_id, msg, 'error')
+                return None
+
+        except subprocess.TimeoutExpired:
+            msg = "WAV extraction timed out (file may be very large)"
+            self.logger.error(msg)
+            if recording_id:
+                db.add_recording_log(recording_id, msg, 'error')
+            return None
+        except Exception as e:
+            msg = f"Error extracting WAV: {e}"
+            self.logger.error(msg, exc_info=True)
+            if recording_id:
+                db.add_recording_log(recording_id, msg, 'error')
+            return None
+
+    def process_recording(self, recording_path: str, recording_id: Optional[int] = None) -> Dict:
+        """
+        Process a recording: extract WAV audio for transcription.
+
+        Args:
+            recording_path: Path to the original recording file
+            recording_id: Optional database recording ID to track progress
 
         Returns:
             Dictionary with processing results
@@ -380,7 +571,6 @@ class PostProcessor:
                     db.update_post_process_status(recording_id, 'failed', 'File not found')
                     db.add_recording_log(recording_id, msg, 'error')
                 except Exception:
-                    # Best-effort status update; ignore DB errors
                     pass
             return {"success": False, "error": "File not found"}
 
@@ -394,7 +584,6 @@ class PostProcessor:
                     db.update_post_process_status(recording_id, 'failed', msg)
                     db.add_recording_log(recording_id, msg, 'error')
                 except Exception:
-                    # Best-effort status update; ignore DB errors
                     pass
             return {"success": False, "error": "Could not determine duration"}
 
@@ -403,9 +592,9 @@ class PostProcessor:
         if recording_id:
             db.add_recording_log(recording_id, msg, 'info')
 
-        # Check if recording has any audio
+        # Check if recording has any speech
         if not self.has_audio(recording_path, recording_id):
-            msg = "No audio detected in entire recording - removing file"
+            msg = "No speech detected in recording - removing file"
             self.logger.warning(msg)
             if recording_id:
                 db.add_recording_log(recording_id, msg, 'warning')
@@ -423,168 +612,76 @@ class PostProcessor:
                 if recording_id:
                     db.add_recording_log(recording_id, msg, 'warning')
 
-            # Mark recording as failed in database if recording_id provided
+            # Mark recording as failed in database
             if recording_id:
                 try:
                     db.update_recording(
                         recording_id,
                         datetime.now(CALGARY_TZ),
                         'failed',
-                        'No audio detected in recording'
+                        'No speech detected in recording'
                     )
-                    # Use 'skipped' status since post-processing successfully determined there was no audio
-                    db.update_post_process_status(recording_id, 'skipped', 'No audio detected - file removed')
+                    db.update_post_process_status(recording_id, 'skipped', 'No speech detected - file removed')
                     db.add_recording_log(recording_id, 'Recording marked as failed in database', 'info')
                     self.logger.info("Recording marked as failed in database")
                 except Exception:
-                    # Best-effort status update; ignore DB errors so they don't mask processing result
                     self.logger.warning("Could not update database")
 
             return {
                 "success": False,
-                "error": "No audio detected",
+                "error": "No speech detected",
                 "deleted": True,
-                "message": "Recording had no audio and was removed"
+                "message": "Recording had no speech and was removed"
             }
 
-        # Detect silent periods (breaks)
-        silent_periods = self.detect_silent_periods(recording_path, recording_id)
+        # Extract WAV audio for transcription
+        wav_path = self.extract_wav(recording_path, recording_id)
 
-        # Calculate active segments
-        segments = self.calculate_segments(duration, silent_periods)
-
-        if not segments:
-            msg = "No segmentation needed - no breaks detected"
-            self.logger.info(msg)
-
+        if not wav_path:
+            msg = "Failed to extract WAV audio"
+            self.logger.error(msg)
             if recording_id:
                 try:
-                    db.update_post_process_status(recording_id, 'completed')
-                    db.add_recording_log(recording_id, msg, 'info')
-                except Exception:
-                    # Best-effort status update; ignore DB errors
-                    pass
-
-            return {
-                "success": True,
-                "segments_created": 0,
-                "message": "No breaks detected - no segmentation needed. Use transcribe button to generate transcript."
-            }
-
-        # Create output directory for segments
-        base_name = os.path.splitext(os.path.basename(recording_path))[0]
-        output_dir = os.path.join(os.path.dirname(recording_path), f"{base_name}_segments")
-        os.makedirs(output_dir, exist_ok=True)
-
-        if recording_id:
-            db.add_recording_log(recording_id, f"Creating {len(segments)} segments", 'info')
-
-        # Copy original to segments folder for safety
-        original_dest = os.path.join(output_dir, f"{base_name}_original.mp4")
-        msg = f"Preserving original: {original_dest}"
-        self.logger.info(msg)
-        if recording_id:
-            db.add_recording_log(recording_id, msg, 'info')
-
-        try:
-            import shutil
-            shutil.copy2(recording_path, original_dest)
-        except Exception as e:
-            self.logger.warning(f"Could not copy original: {e}")
-
-        # Extract segments
-        segment_files = []
-        for i, (start, end) in enumerate(segments, 1):
-            segment_duration = end - start
-            output_path = os.path.join(output_dir, f"{base_name}_segment_{i}.mp4")
-
-            msg = f"Extracting segment {i}/{len(segments)}: {start:.1f}s - {end:.1f}s ({segment_duration/60:.1f} min)"
-            self.logger.info(msg)
-            if recording_id:
-                db.add_recording_log(recording_id, msg, 'info')
-
-            if self.extract_segment(recording_path, output_path, start, end):
-                file_size_bytes = os.path.getsize(output_path)
-                file_size_mb = file_size_bytes / (1024**2)  # MB
-
-                segment_info = {
-                    "path": output_path,
-                    "segment": i,
-                    "start": start,
-                    "end": end,
-                    "duration": segment_duration,
-                    "size_mb": file_size_mb,
-                    "size_bytes": file_size_bytes
-                }
-                segment_files.append(segment_info)
-
-                # Save segment to database if recording_id provided
-                if recording_id:
-                    try:
-                        segment_id = db.create_segment(
-                            recording_id=recording_id,
-                            segment_number=i,
-                            file_path=output_path,
-                            start_time=start,
-                            end_time=end,
-                            duration=segment_duration,
-                            file_size_bytes=file_size_bytes
-                        )
-                        segment_info['db_id'] = segment_id
-                        msg = f"Segment {i} created: {file_size_mb:.1f} MB (DB ID: {segment_id})"
-                        self.logger.info(msg)
-                        db.add_recording_log(recording_id, msg, 'info')
-                    except Exception as e:
-                        msg = f"Segment {i} created: {file_size_mb:.1f} MB (DB save failed: {e})"
-                        self.logger.warning(msg)
-                        if recording_id:
-                            db.add_recording_log(recording_id, msg, 'warning')
-                else:
-                    self.logger.info(f"Segment {i} created: {file_size_mb:.1f} MB")
-            else:
-                msg = f"Failed to create segment {i}"
-                self.logger.error(msg)
-                if recording_id:
+                    db.update_post_process_status(recording_id, 'failed', msg)
                     db.add_recording_log(recording_id, msg, 'error')
+                except Exception:
+                    pass
+            return {"success": False, "error": "WAV extraction failed"}
 
-        # Note: Transcription is now handled separately via the /transcribe endpoint
-        # This allows users to control when transcription happens independently of segmentation
-
-        # Mark recording as segmented and post-processed in database
-        if recording_id and len(segment_files) > 0:
+        # Store WAV path in database
+        if recording_id:
             try:
-                db.mark_recording_segmented(recording_id)
-                db.update_post_process_status(recording_id, 'completed')
-                msg = "Recording marked as segmented in database"
+                with db.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE recordings SET wav_path = ? WHERE id = ?",
+                        (wav_path, recording_id)
+                    )
+                msg = f"WAV path saved to database: {wav_path}"
                 self.logger.info(msg)
                 db.add_recording_log(recording_id, msg, 'info')
             except Exception as e:
-                msg = f"Could not mark recording as segmented: {e}"
+                msg = f"Could not save WAV path to database: {e}"
                 self.logger.warning(msg)
-                if recording_id:
-                    db.add_recording_log(recording_id, msg, 'error')
-        elif recording_id:
-            # Post-processing attempted but no segments created
+
+        # Mark post-processing as completed
+        if recording_id:
             try:
-                db.update_post_process_status(recording_id, 'completed', 'No segments created')
-                db.add_recording_log(recording_id, 'No segments created', 'info')
+                db.update_post_process_status(recording_id, 'completed')
+                db.add_recording_log(recording_id, 'Post-processing completed - WAV ready for transcription', 'info')
             except Exception:
-                # Best-effort status update; ignore DB errors
                 pass
 
         self.logger.info("========================================")
-        self.logger.info("Processing complete")
-        self.logger.info(f"Segments folder: {output_dir}")
-        self.logger.info(f"Segments created: {len(segment_files)}/{len(segments)}")
-        self.logger.info(f"Original preserved: {original_dest}")
+        self.logger.info("Post-processing complete")
+        self.logger.info(f"WAV file: {wav_path}")
+        self.logger.info("Ready for transcription")
         self.logger.info("========================================")
 
         return {
             "success": True,
-            "segments_created": len(segment_files),
-            "output_dir": output_dir,
-            "segment_files": segment_files,
-            "original_preserved": original_dest
+            "wav_path": wav_path,
+            "message": "WAV extraction completed. Ready for transcription."
         }
 
 

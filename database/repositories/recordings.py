@@ -48,6 +48,30 @@ def create_recording(meeting_id: Optional[int], file_path: str, stream_url: str,
         return cursor.lastrowid
 
 
+def update_download_progress(recording_id: int, progress: int, speed: Optional[str] = None) -> None:
+    """Update download progress for a recording.
+
+    Args:
+        recording_id: Recording ID
+        progress: Download progress percentage (0-100)
+        speed: Optional download speed string (e.g., "5.2 MB/s")
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if speed is not None:
+            cursor.execute("""
+                UPDATE recordings
+                SET download_progress = ?, download_speed = ?
+                WHERE id = ?
+            """, (progress, speed, recording_id))
+        else:
+            cursor.execute("""
+                UPDATE recordings
+                SET download_progress = ?
+                WHERE id = ?
+            """, (progress, recording_id))
+
+
 def update_recording(recording_id: int, end_time: datetime, status: str,
                      error_message: Optional[str] = None) -> None:
     """Update recording with completion details.
@@ -257,11 +281,14 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
             SELECT
                 r.id,
                 r.file_path,
+                r.stream_url,
                 r.start_time,
                 r.end_time,
                 r.duration_seconds,
                 r.file_size_bytes,
                 r.status,
+                r.error_message,
+                r.download_progress,
                 r.transcript_path,
                 r.is_segmented,
                 r.post_process_status,
@@ -275,6 +302,8 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 r.diarization_pyannote_path,
                 r.diarization_gemini_path,
                 r.speakers,
+                r.pyannote_media_url,
+                r.pyannote_upload_size_mb,
                 m.id as meeting_id,
                 m.title as meeting_title,
                 m.meeting_datetime
@@ -288,11 +317,14 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
             return {
                 'id': row['id'],
                 'file_path': row['file_path'],
+                'stream_url': row['stream_url'],
                 'start_time': row['start_time'],
                 'end_time': row['end_time'],
                 'duration_seconds': row['duration_seconds'],
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
+                'error_message': row['error_message'],
+                'download_progress': row['download_progress'],
                 'transcript_path': row['transcript_path'],
                 'is_segmented': row['is_segmented'],
                 'post_process_status': row['post_process_status'],
@@ -306,6 +338,8 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 'diarization_pyannote_path': row['diarization_pyannote_path'],
                 'diarization_gemini_path': row['diarization_gemini_path'],
                 'speakers': row['speakers'],
+                'pyannote_media_url': row['pyannote_media_url'],
+                'pyannote_upload_size_mb': row['pyannote_upload_size_mb'],
                 'meeting_id': row['meeting_id'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']

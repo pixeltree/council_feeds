@@ -193,3 +193,221 @@ class TestWebServerProcessRecording:
         data = response.get_json()
         assert data['success'] is False
         assert 'file not found' in data['error'].lower()
+
+
+@pytest.mark.unit
+class TestWebServerPostProcessing:
+    """Test post-processing API endpoints."""
+
+    @patch('web_server.threading.Thread')
+    @patch('web_server.post_processor_service')
+    @patch('web_server.db.update_post_process_status')
+    @patch('os.path.exists')
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_success(self, mock_get_recording, mock_exists,
+                                          mock_update_status, mock_processor, mock_thread, client):
+        """Test successful post-processing trigger."""
+        mock_get_recording.return_value = {
+            'id': 1,
+            'status': 'completed',
+            'file_path': '/fake/path.mp4',
+            'is_segmented': False,
+            'post_process_status': 'pending'
+        }
+        mock_exists.return_value = True
+        mock_processor.return_value = Mock()
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert 'started' in data['message'].lower()
+        mock_update_status.assert_called_once_with(1, 'processing')
+        mock_thread.assert_called_once()
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_not_found(self, mock_get_recording, client):
+        """Test post-processing when recording not found."""
+        mock_get_recording.return_value = None
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 404
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'not found' in data['error'].lower()
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_not_completed(self, mock_get_recording, client):
+        """Test post-processing when recording not completed."""
+        mock_get_recording.return_value = {
+            'id': 1,
+            'status': 'recording',
+            'file_path': '/fake/path.mp4'
+        }
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'completed' in data['error'].lower()
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_already_segmented(self, mock_get_recording, client):
+        """Test post-processing when already segmented."""
+        mock_get_recording.return_value = {
+            'id': 1,
+            'status': 'completed',
+            'file_path': '/fake/path.mp4',
+            'is_segmented': True
+        }
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'already been segmented' in data['error'].lower()
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_already_processing(self, mock_get_recording, client):
+        """Test post-processing when already in progress."""
+        mock_get_recording.return_value = {
+            'id': 1,
+            'status': 'completed',
+            'file_path': '/fake/path.mp4',
+            'is_segmented': False,
+            'post_process_status': 'processing'
+        }
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'already being post-processed' in data['error'].lower()
+
+    @patch('os.path.exists')
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_file_not_found(self, mock_get_recording, mock_exists, client):
+        """Test post-processing when file doesn't exist."""
+        mock_get_recording.return_value = {
+            'id': 1,
+            'status': 'completed',
+            'file_path': '/fake/path.mp4',
+            'is_segmented': False,
+            'post_process_status': 'pending'
+        }
+        mock_exists.return_value = False
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 404
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'file not found' in data['error'].lower()
+
+    @patch('web_server.post_processor_service', None)
+    @patch('os.path.exists')
+    @patch('web_server.db.get_recording_by_id')
+    def test_postprocess_recording_service_not_available(self, mock_get_recording, mock_exists, client):
+        """Test post-processing when service not initialized."""
+        mock_get_recording.return_value = {
+            'id': 1,
+            'status': 'completed',
+            'file_path': '/fake/path.mp4',
+            'is_segmented': False,
+            'post_process_status': 'pending'
+        }
+        mock_exists.return_value = True
+
+        response = client.post('/api/recordings/1/postprocess')
+
+        assert response.status_code == 500
+        data = response.get_json()
+        assert data['success'] is False
+        assert 'not available' in data['error'].lower()
+
+
+@pytest.mark.unit
+class TestWebServerLogsAPI:
+    """Test logs and status API endpoints."""
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_get_recording_success(self, mock_get_recording, client):
+        """Test getting recording details."""
+        mock_recording = {
+            'id': 1,
+            'status': 'completed',
+            'post_process_status': 'completed'
+        }
+        mock_get_recording.return_value = mock_recording
+
+        response = client.get('/api/recordings/1')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert data['recording'] == mock_recording
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_get_recording_not_found(self, mock_get_recording, client):
+        """Test getting non-existent recording."""
+        mock_get_recording.return_value = None
+
+        response = client.get('/api/recordings/1')
+
+        assert response.status_code == 404
+        data = response.get_json()
+        assert data['success'] is False
+
+    @patch('web_server.db.get_recording_logs')
+    @patch('web_server.db.get_recording_by_id')
+    def test_get_recording_logs_success(self, mock_get_recording, mock_get_logs, client):
+        """Test getting recording logs."""
+        mock_get_recording.return_value = {'id': 1}
+        mock_get_logs.return_value = [
+            {'id': 1, 'message': 'Starting', 'level': 'info'},
+            {'id': 2, 'message': 'Processing', 'level': 'info'},
+            {'id': 3, 'message': 'Complete', 'level': 'info'}
+        ]
+
+        response = client.get('/api/recordings/1/logs')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        assert len(data['logs']) == 3
+
+    @patch('web_server.db.get_recording_logs')
+    @patch('web_server.db.get_recording_by_id')
+    def test_get_recording_logs_since(self, mock_get_recording, mock_get_logs, client):
+        """Test getting logs since a specific ID."""
+        mock_get_recording.return_value = {'id': 1}
+        mock_get_logs.return_value = [
+            {'id': 1, 'message': 'Starting', 'level': 'info'},
+            {'id': 2, 'message': 'Processing', 'level': 'info'},
+            {'id': 3, 'message': 'Complete', 'level': 'info'}
+        ]
+
+        response = client.get('/api/recordings/1/logs?since=1')
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data['success'] is True
+        # Should only return logs with id > 1
+        assert len(data['logs']) == 2
+        assert all(log['id'] > 1 for log in data['logs'])
+
+    @patch('web_server.db.get_recording_by_id')
+    def test_get_recording_logs_not_found(self, mock_get_recording, client):
+        """Test getting logs for non-existent recording."""
+        mock_get_recording.return_value = None
+
+        response = client.get('/api/recordings/1/logs')
+
+        assert response.status_code == 404
+        data = response.get_json()
+        assert data['success'] is False

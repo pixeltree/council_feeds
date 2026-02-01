@@ -24,7 +24,6 @@ from config import (
     POST_PROCESS_SILENCE_THRESHOLD_DB,
     POST_PROCESS_MIN_SILENCE_DURATION,
     ENABLE_TRANSCRIPTION,
-    WHISPER_MODEL,
     PYANNOTE_API_TOKEN,
     ENABLE_SEGMENTED_RECORDING,
 )
@@ -166,9 +165,10 @@ class RecordingService:
             # Use injected transcription service or create a default one
             if self.transcription_service is None:
                 from transcription_service import TranscriptionService
+                from config import PYANNOTE_SEGMENTATION_THRESHOLD
                 transcriber = TranscriptionService(
-                    whisper_model=WHISPER_MODEL,
-                    pyannote_api_token=PYANNOTE_API_TOKEN
+                    pyannote_api_token=PYANNOTE_API_TOKEN,
+                    pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
                 )
             else:
                 transcriber = self.transcription_service

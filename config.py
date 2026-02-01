@@ -84,8 +84,8 @@ AUDIO_DETECTION_MAX_THRESHOLD_DB = -30  # Max volume threshold for detecting sil
 
 # Transcription settings
 ENABLE_TRANSCRIPTION = os.getenv("ENABLE_TRANSCRIPTION", "false").lower() == "true"
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # tiny, base, small, medium, large
-PYANNOTE_API_TOKEN = os.getenv("PYANNOTE_API_TOKEN", None)  # Required for speaker diarization
+PYANNOTE_API_TOKEN = os.getenv("PYANNOTE_API_TOKEN", None)  # Required for transcription + diarization
+PYANNOTE_SEGMENTATION_THRESHOLD = float(os.getenv("PYANNOTE_SEGMENTATION_THRESHOLD", "0.3"))  # Lower = more speakers (0.1-0.9)
 
 # Recording resilience settings
 RECORDING_FORMAT = os.getenv("RECORDING_FORMAT", "mkv")  # mkv (safest), mp4, or ts
@@ -154,8 +154,8 @@ class AppConfig:
 
     # Transcription settings
     enable_transcription: bool
-    whisper_model: str
     pyannote_api_token: Optional[str]
+    pyannote_segmentation_threshold: float
 
     # Recording resilience settings
     recording_format: str
@@ -209,8 +209,8 @@ class AppConfig:
             audio_detection_mean_threshold_db=AUDIO_DETECTION_MEAN_THRESHOLD_DB,
             audio_detection_max_threshold_db=AUDIO_DETECTION_MAX_THRESHOLD_DB,
             enable_transcription=ENABLE_TRANSCRIPTION,
-            whisper_model=WHISPER_MODEL,
             pyannote_api_token=PYANNOTE_API_TOKEN,
+            pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD,
             recording_format=RECORDING_FORMAT,
             enable_segmented_recording=ENABLE_SEGMENTED_RECORDING,
             segment_duration=SEGMENT_DURATION,
@@ -288,17 +288,17 @@ class AppConfig:
                 errors.append(f"Cannot create DB_DIR '{self.db_dir}': {e}")
 
         # Validate transcription settings
-        valid_whisper_models = ["tiny", "base", "small", "medium", "large", "turbo"]
-        if self.whisper_model not in valid_whisper_models:
-            errors.append(
-                f"WHISPER_MODEL must be one of {valid_whisper_models} "
-                f"(got '{self.whisper_model}')"
-            )
-
         if self.enable_transcription and not self.pyannote_api_token:
             errors.append(
                 "PYANNOTE_API_TOKEN is required when ENABLE_TRANSCRIPTION=true. "
                 "Get a token from https://huggingface.co/pyannote/speaker-diarization"
+            )
+
+        # Validate pyannote segmentation threshold
+        if not (0.0 <= self.pyannote_segmentation_threshold <= 1.0):
+            errors.append(
+                f"PYANNOTE_SEGMENTATION_THRESHOLD must be between 0.0 and 1.0 "
+                f"(got {self.pyannote_segmentation_threshold})"
             )
 
         # Validate Gemini settings

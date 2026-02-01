@@ -13,12 +13,12 @@ services:
     ports:
       - "5000:5000"
     restart: unless-stopped
+    mem_limit: 10g
     environment:
       - TZ=America/Edmonton
       - AUTO_START_MONITORING=${AUTO_START_MONITORING:-false}
       - ENABLE_POST_PROCESSING=${ENABLE_POST_PROCESSING:-false}
       - ENABLE_TRANSCRIPTION=${ENABLE_TRANSCRIPTION:-false}
-      - WHISPER_MODEL=${WHISPER_MODEL:-base}
       - PYANNOTE_API_TOKEN=${PYANNOTE_API_TOKEN}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-1.5-flash}
