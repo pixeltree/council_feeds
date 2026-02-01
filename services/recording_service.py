@@ -45,16 +45,13 @@ class RecordingService:
         ffmpeg_command: str = FFMPEG_COMMAND,
         timezone: Any = CALGARY_TZ,
         stream_service: Optional[StreamService] = None,
-        transcription_service: Optional["TranscriptionService"] = None,
-        post_processor: Optional["PostProcessor"] = None
-    ):
+        transcription_service: Optional["TranscriptionService"] = None):
         self.output_dir = output_dir
         self.ffmpeg_command = ffmpeg_command
         self.timezone = timezone
         self.stream_service = stream_service or StreamService()
         self.transcription_service = transcription_service
-        self.post_processor = post_processor
-        self.current_process: Optional[subprocess.Popen[bytes]] = None
+                self.current_process: Optional[subprocess.Popen[bytes]] = None
         self.current_recording_id: Optional[int] = None
         self.logger = logging.getLogger(__name__)
 

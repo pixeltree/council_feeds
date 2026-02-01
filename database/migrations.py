@@ -252,3 +252,13 @@ def _migrate_add_pyannote_media_url_column(cursor: sqlite3.Cursor) -> None:
     if 'diarization_status' not in columns:
         logger.info("Running migration: Adding diarization_status column to recordings table")
         cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_status TEXT")  # pending, running, completed, failed
+
+        # Migration: Remove segmentation feature (no longer needed with cloud transcription)
+        # Drop segments table
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='segments'")
+        if cursor.fetchone():
+            logger.info("Running migration: Dropping segments table (segmentation feature removed)")
+            cursor.execute("DROP TABLE IF EXISTS segments")
+
+        # Remove is_segmented column from recordings (note: SQLite doesn't support DROP COLUMN directly in older versions)
+        # We'll leave it for backwards compatibility but stop using it

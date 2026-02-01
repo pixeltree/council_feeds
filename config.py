@@ -73,12 +73,7 @@ WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
 FFMPEG_COMMAND = os.getenv("FFMPEG_COMMAND", "ffmpeg")
 YTDLP_COMMAND = os.getenv("YTDLP_COMMAND", "yt-dlp")
 
-# Post-processing settings (experimental)
-ENABLE_POST_PROCESSING = os.getenv("ENABLE_POST_PROCESSING", "false").lower() == "true"
-POST_PROCESS_SILENCE_THRESHOLD_DB = int(os.getenv("POST_PROCESS_SILENCE_THRESHOLD_DB", "-40"))
-POST_PROCESS_MIN_SILENCE_DURATION = int(os.getenv("POST_PROCESS_MIN_SILENCE_DURATION", "120"))  # seconds
-
-# Audio detection thresholds (used for both static detection and post-processing)
+# Audio detection thresholds (used for static detection)
 AUDIO_DETECTION_MEAN_THRESHOLD_DB = -50  # Mean volume threshold for detecting silence
 AUDIO_DETECTION_MAX_THRESHOLD_DB = -30  # Max volume threshold for detecting silence
 
@@ -143,11 +138,6 @@ class AppConfig:
     ffmpeg_command: str
     ytdlp_command: str
 
-    # Post-processing settings
-    enable_post_processing: bool
-    post_process_silence_threshold_db: int
-    post_process_min_silence_duration: int
-
     # Audio detection thresholds
     audio_detection_mean_threshold_db: int
     audio_detection_max_threshold_db: int
@@ -203,9 +193,6 @@ class AppConfig:
             web_port=WEB_PORT,
             ffmpeg_command=FFMPEG_COMMAND,
             ytdlp_command=YTDLP_COMMAND,
-            enable_post_processing=ENABLE_POST_PROCESSING,
-            post_process_silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-            post_process_min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
             audio_detection_mean_threshold_db=AUDIO_DETECTION_MEAN_THRESHOLD_DB,
             audio_detection_max_threshold_db=AUDIO_DETECTION_MAX_THRESHOLD_DB,
             enable_transcription=ENABLE_TRANSCRIPTION,

@@ -29,10 +29,7 @@ from config import (
     MEETING_BUFFER_AFTER,
     ENABLE_TRANSCRIPTION,
     PYANNOTE_SEGMENTATION_THRESHOLD,
-    ENABLE_POST_PROCESSING,
     PYANNOTE_API_TOKEN,
-    POST_PROCESS_SILENCE_THRESHOLD_DB,
-    POST_PROCESS_MIN_SILENCE_DURATION,
     FFMPEG_COMMAND,
     validate_config
 )
@@ -115,20 +112,10 @@ if ENABLE_TRANSCRIPTION:
         pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
     )
 
-post_processor = None
-if ENABLE_POST_PROCESSING:
-    from post_processor import PostProcessor
-    post_processor = PostProcessor(
-        silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-        min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
-        ffmpeg_command=FFMPEG_COMMAND
-    )
-
 # Initialize recording service with all dependencies
 recording_service = RecordingService(
     stream_service=stream_service,
-    transcription_service=transcription_service,
-    post_processor=post_processor
+    transcription_service=transcription_service
 )
 
 def daily_calendar_refresh() -> None:
