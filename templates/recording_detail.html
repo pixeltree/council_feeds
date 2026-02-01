@@ -1431,7 +1431,7 @@
 
             if (btn.disabled) return;
 
-            if (!confirm('This will analyze the video for silence periods and split it into segments. This may take several minutes. Continue?')) {
+            if (!confirm('This will extract the audio from the video for transcription. This may take several minutes. Continue?')) {
                 return;
             }
 
@@ -1439,7 +1439,7 @@
             btn.disabled = true;
             btnText.classList.add('hidden');
             btnLoading.classList.remove('hidden');
-            statusDiv.innerHTML = '<span class="text-orange-600">⏳ Analyzing video for silence periods...</span>';
+            statusDiv.innerHTML = '<span class="text-orange-600">⏳ Extracting audio from video...</span>';
             logsDiv.classList.remove('hidden');
             logsContainer.innerHTML = '';
             lastPostprocessLogId = 0;
@@ -1508,7 +1508,7 @@
                     if (statusData.recording.post_process_status === 'completed') {
                         clearInterval(postprocessInterval);
                         document.getElementById('postprocess-status').innerHTML = '<span class="text-green-600">✓ Post-processing completed</span>';
-                        // Reload page after 2 seconds to show segments
+                        // Reload page after 2 seconds to show updated status
                         setTimeout(() => window.location.reload(), 2000);
                     } else if (statusData.recording.post_process_status === 'failed') {
                         clearInterval(postprocessInterval);

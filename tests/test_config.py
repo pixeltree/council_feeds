@@ -39,9 +39,6 @@ class TestAppConfigValidation:
             web_port=5000,
             ffmpeg_command="ffmpeg",
             ytdlp_command="yt-dlp",
-            enable_post_processing=False,
-            post_process_silence_threshold_db=-40,
-            post_process_min_silence_duration=120,
             audio_detection_mean_threshold_db=-50,
             audio_detection_max_threshold_db=-30,
             enable_transcription=False,
@@ -80,9 +77,6 @@ class TestAppConfigValidation:
             web_port=5000,
             ffmpeg_command="ffmpeg",
             ytdlp_command="yt-dlp",
-            enable_post_processing=False,
-            post_process_silence_threshold_db=-40,
-            post_process_min_silence_duration=120,
             audio_detection_mean_threshold_db=-50,
             audio_detection_max_threshold_db=-30,
             enable_transcription=False,
@@ -398,9 +392,6 @@ class TestAppConfigValidation:
             web_port=0,  # Invalid
             ffmpeg_command="ffmpeg",
             ytdlp_command="yt-dlp",
-            enable_post_processing=False,
-            post_process_silence_threshold_db=-40,
-            post_process_min_silence_duration=120,
             audio_detection_mean_threshold_db=-50,
             audio_detection_max_threshold_db=-30,
             enable_transcription=False,
@@ -455,7 +446,6 @@ class TestAppConfigValidation:
             assert hasattr(config, 'web_port')
             assert hasattr(config, 'ffmpeg_command')
             assert hasattr(config, 'ytdlp_command')
-            assert hasattr(config, 'enable_post_processing')
             assert hasattr(config, 'enable_transcription')
             assert hasattr(config, 'pyannote_api_token')
             assert hasattr(config, 'pyannote_segmentation_threshold')

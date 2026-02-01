@@ -16,7 +16,6 @@ from flask import Flask, render_template, jsonify, send_file, request, Response
 
 import database as db
 from config import CALGARY_TZ, WEB_HOST, WEB_PORT, OUTPUT_DIR
-from post_processor import PostProcessor
 from shared_state import monitoring_state
 from exceptions import (
     CouncilRecorderError,
@@ -32,17 +31,11 @@ app = Flask(__name__)
 
 # Global references to services (set by main.py)
 recording_service = None
-post_processor_service = None
 
 def set_recording_service(service: Any) -> None:
     """Set the recording service instance for the web server to use."""
     global recording_service
     recording_service = service
-
-def set_post_processor(processor: Any) -> None:
-    """Set the post processor instance for the web server to use."""
-    global post_processor_service
-    post_processor_service = processor
 
 
 def get_current_recording() -> Optional[Dict[str, Any]]:
@@ -133,13 +126,10 @@ def recordings_list() -> str:
     """Recordings list page with segments."""
     recordings = db.get_recent_recordings(limit=50)
 
-    # Format recordings with segment info
+    # Format recordings
     formatted_recordings = []
     for rec in recordings:
         start_time = db.parse_datetime_from_db(rec['start_time']) if rec['start_time'] else None
-
-        # Get segments for this recording
-        segments = db.get_segments_by_recording(rec['id'])
 
         formatted_recordings.append({
             'id': rec['id'],
@@ -148,13 +138,9 @@ def recordings_list() -> str:
             'duration_minutes': round(rec['duration_seconds'] / 60) if rec['duration_seconds'] else None,
             'file_size_mb': round(rec['file_size_bytes'] / (1024**2), 1) if rec['file_size_bytes'] else None,
             'status': rec['status'],
-            'is_segmented': rec['is_segmented'],
             'has_transcript': bool(rec['transcript_path']),
             'transcript_path': rec['transcript_path'],
-            'file_path': rec['file_path'],
-            'post_process_status': rec.get('post_process_status'),
-            'post_process_error': rec.get('post_process_error'),
-            'segments': segments
+            'file_path': rec['file_path']
         })
 
     return render_template('recordings.html', recordings=formatted_recordings)
@@ -199,39 +185,14 @@ def recording_detail(recording_id: int) -> Union[str, Tuple[str, int]]:
         'duration_minutes': round(recording['duration_seconds'] / 60) if recording['duration_seconds'] else None,
         'file_size_mb': round(recording['file_size_bytes'] / (1024**2), 1) if recording['file_size_bytes'] else None,
         'status': recording['status'],
-        'is_segmented': recording['is_segmented'],
         'has_transcript': bool(recording['transcript_path']),
         'transcript_path': recording['transcript_path'],
         'file_path': recording['file_path'],
-        'post_process_status': recording.get('post_process_status'),
-        'post_process_error': recording.get('post_process_error'),
         'diarization_pyannote_path': recording.get('diarization_pyannote_path'),
         'diarization_gemini_path': recording.get('diarization_gemini_path'),
         'diarization_status': recording.get('diarization_status'),
         'pyannote_job_id': recording.get('pyannote_job_id')
     }
-
-    # Get segments
-    segments = db.get_segments_by_recording(recording_id)
-
-    # Add diarization file existence checks for each segment
-    for segment in segments:
-        if segment.get('file_path'):
-            file_path = segment['file_path']
-            segment['has_diarization_pyannote'] = os.path.exists(file_path + '.diarization.pyannote.json')
-            segment['has_diarization_gemini'] = os.path.exists(file_path + '.diarization.gemini.json')
-            # Check legacy format too
-            segment['has_diarization_legacy'] = os.path.exists(file_path + '.diarization.json')
-            segment['has_any_diarization'] = (
-                segment['has_diarization_pyannote'] or
-                segment['has_diarization_gemini'] or
-                segment['has_diarization_legacy']
-            )
-        else:
-            segment['has_diarization_pyannote'] = False
-            segment['has_diarization_gemini'] = False
-            segment['has_diarization_legacy'] = False
-            segment['has_any_diarization'] = False
 
     # Get logs in reverse chronological order
     logs = db.get_recording_logs(recording_id, limit=200)
@@ -239,7 +200,6 @@ def recording_detail(recording_id: int) -> Union[str, Tuple[str, int]]:
     return render_template(
         'recording_detail.html',
         recording=formatted_recording,
-        segments=segments,
         logs=logs
     )
 
@@ -357,51 +317,6 @@ def api_refresh_agenda() -> Union[Response, Tuple[Response, int]]:
         }), 500
 
 
-@app.route('/api/recordings/<int:recording_id>/process', methods=['POST'])
-def process_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
-    """Trigger post-processing for a recording."""
-    recording = db.get_recording_by_id(recording_id)
-
-    if not recording:
-        return jsonify({'success': False, 'error': 'Recording not found'}), 404
-
-    if recording['status'] != 'completed':
-        return jsonify({'success': False, 'error': 'Recording must be completed before processing'}), 400
-
-    # Check if already processing
-    if recording.get('post_process_status') == 'processing':
-        return jsonify({'success': False, 'error': 'Recording is already being processed'}), 400
-
-    if not os.path.exists(recording['file_path']):
-        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
-
-    # Update status to 'processing' before starting thread to prevent race condition
-    db.update_post_process_status(recording_id, 'processing', None)
-
-    # Run post-processing in background thread
-    def run_processing() -> None:
-        # Use injected post processor or create a default one
-        global post_processor_service
-        if post_processor_service is not None:
-            processor = post_processor_service
-        else:
-            processor = PostProcessor()
-        result = processor.process_recording(recording['file_path'], recording_id)
-        logger.info(f"Post-processing result for recording {recording_id}: {result}")
-
-    thread = threading.Thread(target=run_processing, daemon=True)
-    thread.start()
-
-    return jsonify({'success': True, 'message': 'Post-processing started'})
-
-
-@app.route('/api/recordings/<int:recording_id>/segment', methods=['POST'])
-def segment_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
-    """Trigger segmentation for a recording (legacy endpoint - use /process instead)."""
-    # Redirect to the new process endpoint
-    return process_recording(recording_id)
-
-
 @app.route('/download/transcript/<int:recording_id>')
 def download_recording_transcript(recording_id: int) -> Union[Response, Tuple[str, int]]:
     """Download transcript for a recording."""
@@ -414,27 +329,6 @@ def download_recording_transcript(recording_id: int) -> Union[Response, Tuple[st
         return "Transcript file not found", 404
 
     return send_file(recording['transcript_path'], as_attachment=True)
-
-
-@app.route('/download/transcript/segment/<int:segment_id>')
-def download_segment_transcript(segment_id: int) -> Union[Response, Tuple[str, int]]:
-    """Download transcript for a segment."""
-    conn = db.get_db_connection()
-
-    with conn as connection:
-        cursor = connection.cursor()
-        cursor.execute("SELECT transcript_path FROM segments WHERE id = ?", (segment_id,))
-        row = cursor.fetchone()
-
-        if not row or not row['transcript_path']:
-            return "Transcript not found", 404
-
-        transcript_path = row['transcript_path']
-
-        if not os.path.exists(transcript_path):
-            return "Transcript file not found", 404
-
-        return send_file(transcript_path, as_attachment=True)
 
 
 @app.route('/download/diarization/<int:recording_id>')
@@ -535,83 +429,6 @@ def download_recording_diarization_gemini(recording_id: int) -> Union[Response, 
 
     logger.warning(f"Gemini diarization file not found for recording {recording_id}")
     return "Gemini diarization file not found", 404
-
-
-@app.route('/download/diarization/segment/<int:segment_id>')
-def download_segment_diarization(segment_id: int) -> Union[Response, Tuple[str, int]]:
-    """Download diarization data for a segment (prefers Gemini, falls back to pyannote)."""
-    conn = db.get_db_connection()
-
-    with conn as connection:
-        cursor = connection.cursor()
-        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
-        row = cursor.fetchone()
-
-        if not row or not row['file_path']:
-            return "Segment not found", 404
-
-        file_path = row['file_path']
-
-        # Try Gemini first
-        gemini_path = file_path + '.diarization.gemini.json'
-        if os.path.exists(gemini_path):
-            return send_file(gemini_path, as_attachment=True)
-
-        # Try pyannote
-        pyannote_path = file_path + '.diarization.pyannote.json'
-        if os.path.exists(pyannote_path):
-            return send_file(pyannote_path, as_attachment=True)
-
-        # Fall back to legacy
-        legacy_path = file_path + '.diarization.json'
-        if os.path.exists(legacy_path):
-            return send_file(legacy_path, as_attachment=True)
-
-        return "Diarization file not found", 404
-
-
-@app.route('/download/diarization/pyannote/segment/<int:segment_id>')
-def download_segment_diarization_pyannote(segment_id: int) -> Union[Response, Tuple[str, int]]:
-    """Download pyannote diarization data for a segment."""
-    conn = db.get_db_connection()
-
-    with conn as connection:
-        cursor = connection.cursor()
-        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
-        row = cursor.fetchone()
-
-        if not row or not row['file_path']:
-            return "Segment not found", 404
-
-        file_path = row['file_path']
-        pyannote_path = file_path + '.diarization.pyannote.json'
-
-        if os.path.exists(pyannote_path):
-            return send_file(pyannote_path, as_attachment=True)
-
-        return "Pyannote diarization file not found", 404
-
-
-@app.route('/download/diarization/gemini/segment/<int:segment_id>')
-def download_segment_diarization_gemini(segment_id: int) -> Union[Response, Tuple[str, int]]:
-    """Download Gemini-refined diarization data for a segment."""
-    conn = db.get_db_connection()
-
-    with conn as connection:
-        cursor = connection.cursor()
-        cursor.execute("SELECT file_path FROM segments WHERE id = ?", (segment_id,))
-        row = cursor.fetchone()
-
-        if not row or not row['file_path']:
-            return "Segment not found", 404
-
-        file_path = row['file_path']
-        gemini_path = file_path + '.diarization.gemini.json'
-
-        if os.path.exists(gemini_path):
-            return send_file(gemini_path, as_attachment=True)
-
-        return "Gemini diarization file not found", 404
 
 
 @app.route('/api/recordings/stale', methods=['GET'])
@@ -838,23 +655,6 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
 
                 logger.info(f"VOD download completed for recording {recording_id}")
 
-                # Automatically run post-processing if enabled
-                from config import ENABLE_POST_PROCESSING, POST_PROCESS_SILENCE_THRESHOLD_DB, POST_PROCESS_MIN_SILENCE_DURATION
-                if ENABLE_POST_PROCESSING and post_processor_service:
-                    logger.info(f"Starting post-processing for recording {recording_id}")
-                    db.add_recording_log(recording_id, "Starting automatic post-processing", 'info')
-                    try:
-                        result = post_processor_service.process_recording(output_path, recording_id)
-                        if result.get('success'):
-                            logger.info(f"Post-processing completed for recording {recording_id}")
-                            db.add_recording_log(recording_id, "Post-processing completed successfully", 'info')
-                        else:
-                            logger.warning(f"Post-processing failed for recording {recording_id}: {result.get('error')}")
-                            db.add_recording_log(recording_id, f"Post-processing failed: {result.get('error')}", 'warning')
-                    except Exception as pp_error:
-                        logger.error(f"Post-processing error for recording {recording_id}: {pp_error}", exc_info=True)
-                        db.add_recording_log(recording_id, f"Post-processing error: {str(pp_error)}", 'error')
-
                 return
 
             except Exception as e:
@@ -1060,65 +860,6 @@ def api_get_recording_logs(recording_id: int) -> Union[Response, Tuple[Response,
     return jsonify({'success': True, 'logs': new_logs})
 
 
-@app.route('/api/recordings/<int:recording_id>/postprocess', methods=['POST'])
-def api_postprocess_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
-    """API endpoint to trigger post-processing (segmentation) for a recording."""
-    recording = db.get_recording_by_id(recording_id)
-
-    if not recording:
-        return jsonify({'success': False, 'error': 'Recording not found'}), 404
-
-    if recording['status'] != 'completed':
-        return jsonify({'success': False, 'error': 'Recording must be completed before post-processing'}), 400
-
-    # Check if already segmented
-    if recording.get('is_segmented'):
-        return jsonify({'success': False, 'error': 'Recording has already been segmented'}), 400
-
-    # Check if already post-processing
-    if recording.get('post_process_status') == 'processing':
-        return jsonify({'success': False, 'error': 'Recording is already being post-processed'}), 400
-
-    if not os.path.exists(recording['file_path']):
-        return jsonify({'success': False, 'error': 'Recording file not found'}), 404
-
-    # Check if post-processor is available
-    if not post_processor_service:
-        return jsonify({'success': False, 'error': 'Post-processor service not available'}), 500
-
-    # Update status to 'processing'
-    db.update_post_process_status(recording_id, 'processing')
-
-    # Run post-processing in background thread
-    def run_postprocessing() -> None:
-        """Background task to post-process the recording."""
-        try:
-            logger.info(f"Starting post-processing for recording {recording_id}")
-            db.add_recording_log(recording_id, "Starting post-processing", 'info')
-
-            result = post_processor_service.process_recording(recording['file_path'], recording_id)
-
-            if result.get('success'):
-                logger.info(f"Post-processing completed for recording {recording_id}")
-                db.add_recording_log(recording_id, "Post-processing completed successfully", 'info')
-            else:
-                logger.warning(f"Post-processing failed for recording {recording_id}: {result.get('error')}")
-                db.add_recording_log(recording_id, f"Post-processing failed: {result.get('error')}", 'error')
-
-        except Exception as e:
-            logger.error(f"Post-processing error for recording {recording_id}: {e}", exc_info=True)
-            db.update_post_process_status(recording_id, 'failed', str(e))
-            db.add_recording_log(recording_id, f"Post-processing error: {str(e)}", 'error')
-
-    thread = threading.Thread(target=run_postprocessing, daemon=True)
-    thread.start()
-
-    return jsonify({
-        'success': True,
-        'message': 'Post-processing started'
-    })
-
-
 @app.route('/api/recordings/<int:recording_id>/transcribe', methods=['POST'])
 def api_transcribe_recording(recording_id: int) -> Union[Response, Tuple[Response, int]]:
     """API endpoint to trigger transcription for a recording or its segments."""
@@ -1163,74 +904,31 @@ def api_transcribe_recording(recording_id: int) -> Union[Response, Tuple[Respons
                 pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
             )
 
-            # Check if recording has segments
-            segments = db.get_segments_by_recording(recording_id)
+            # Transcribe the original recording
+            db.add_transcription_log(recording_id, 'Transcribing original recording', 'info')
+            db.add_recording_log(recording_id, 'Transcribing original recording', 'info')
 
-            if segments and recording['is_segmented']:
-                # Transcribe each segment
-                db.add_transcription_log(recording_id, f'Found {len(segments)} segments to transcribe', 'info')
-                db.add_recording_log(recording_id, f'Found {len(segments)} segments to transcribe', 'info')
-                db.update_transcription_progress(recording_id, {'stage': 'segments', 'total': len(segments), 'current': 0})
+            # Whisper transcription
+            db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'loading_model'})
+            db.add_transcription_log(recording_id, 'Loading Whisper model', 'info')
+            db.add_recording_log(recording_id, 'Loading Whisper model', 'info')
 
-                for idx, segment in enumerate(segments, 1):
-                    if not os.path.exists(segment['file_path']):
-                        db.add_transcription_log(recording_id, f"Segment file not found: {segment['file_path']}", 'error')
-                        db.add_recording_log(recording_id, f"Segment file not found: {segment['file_path']}", 'error')
-                        continue
+            transcript_path = f"{recording['file_path']}.transcript.json"
 
-                    db.add_transcription_log(recording_id, f"Transcribing segment {idx}/{len(segments)}", 'info')
-                    db.add_recording_log(recording_id, f"Transcribing segment {idx}/{len(segments)}", 'info')
-                    db.update_transcription_progress(recording_id, {'stage': 'segments', 'total': len(segments), 'current': idx})
+            db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
+            db.add_transcription_log(recording_id, 'Running Whisper transcription', 'info')
 
-                    try:
-                        # Whisper transcription
-                        db.update_transcription_progress(recording_id, {'stage': 'whisper', 'segment': idx, 'total': len(segments)})
-                        db.add_transcription_log(recording_id, f"Segment {idx}: Running Whisper transcription", 'info')
+            transcription_service.transcribe_with_speakers(
+                recording['file_path'],
+                output_path=transcript_path,
+                save_to_file=True,
+                recording_id=recording_id
+            )
 
-                        transcript_path = f"{segment['file_path']}.transcript.json"
-                        transcription_service.transcribe_with_speakers(
-                            segment['file_path'],
-                            output_path=transcript_path,
-                            save_to_file=True,
-                            recording_id=recording_id,
-                            segment_number=idx
-                        )
-                        db.update_segment_transcript(segment['id'], transcript_path)
-                        db.add_transcription_log(recording_id, f"Segment {idx}: Completed successfully", 'info')
-                        db.add_recording_log(recording_id, f"Segment {idx}: Completed successfully", 'info')
-                    except Exception as seg_error:
-                        db.add_transcription_log(recording_id, f"Segment {idx} failed: {str(seg_error)}", 'error')
-                        db.add_recording_log(recording_id, f"Segment {idx} failed: {str(seg_error)}", 'error')
-
-                db.update_transcription_status(recording_id, 'completed')
-                db.add_transcription_log(recording_id, 'All segments transcribed successfully', 'info')
-                db.add_recording_log(recording_id, 'All segments transcribed successfully', 'info')
-            else:
-                # Transcribe the original recording
-                db.add_transcription_log(recording_id, 'Transcribing original recording (no segments)', 'info')
-                db.add_recording_log(recording_id, 'Transcribing original recording (no segments)', 'info')
-
-                # Whisper transcription
-                db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'loading_model'})
-                db.add_transcription_log(recording_id, 'Loading Whisper model', 'info')
-                db.add_recording_log(recording_id, 'Loading Whisper model', 'info')
-
-                transcript_path = f"{recording['file_path']}.transcript.json"
-
-                db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
-                db.add_transcription_log(recording_id, 'Running Whisper transcription', 'info')
-
-                transcription_service.transcribe_with_speakers(
-                    recording['file_path'],
-                    output_path=transcript_path,
-                    save_to_file=True,
-                    recording_id=recording_id
-                )
-
-                db.update_recording_transcript(recording_id, transcript_path)
-                db.update_transcription_status(recording_id, 'completed')
-                db.add_transcription_log(recording_id, 'Transcription completed successfully', 'info')
-                db.add_recording_log(recording_id, 'Transcription completed successfully', 'info')
+            db.update_recording_transcript(recording_id, transcript_path)
+            db.update_transcription_status(recording_id, 'completed')
+            db.add_transcription_log(recording_id, 'Transcription completed successfully', 'info')
+            db.add_recording_log(recording_id, 'Transcription completed successfully', 'info')
 
             logger.info(f"Transcription completed for recording {recording_id}")
 
