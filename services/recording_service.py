@@ -20,9 +20,6 @@ from config import (
     CALGARY_TZ,
     OUTPUT_DIR,
     FFMPEG_COMMAND,
-    ENABLE_POST_PROCESSING,
-    POST_PROCESS_SILENCE_THRESHOLD_DB,
-    POST_PROCESS_MIN_SILENCE_DURATION,
     ENABLE_TRANSCRIPTION,
     PYANNOTE_API_TOKEN,
     ENABLE_SEGMENTED_RECORDING,
@@ -51,7 +48,7 @@ class RecordingService:
         self.timezone = timezone
         self.stream_service = stream_service or StreamService()
         self.transcription_service = transcription_service
-                self.current_process: Optional[subprocess.Popen[bytes]] = None
+        self.current_process: Optional[subprocess.Popen[bytes]] = None
         self.current_recording_id: Optional[int] = None
         self.logger = logging.getLogger(__name__)
 

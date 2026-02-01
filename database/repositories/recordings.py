@@ -499,9 +499,6 @@ def get_orphaned_files(recordings_dir: Optional[str] = None) -> List[Dict[str, A
         cursor.execute("SELECT file_path FROM recordings")
         db_files = {row['file_path'] for row in cursor.fetchall()}
 
-        # Also get segment file paths
-                db_files.update(row['file_path'] for row in cursor.fetchall())
-
     orphaned_files = []
 
     # Scan recordings directory
