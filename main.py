@@ -178,7 +178,6 @@ def main() -> None:
 
     # Set recording service in web server so it can stop recordings
     web_server.set_recording_service(recording_service)
-    web_server.set_post_processor(post_processor)
 
     # Start web server in background thread
     web_thread = threading.Thread(target=web_server.run_server, daemon=True)
