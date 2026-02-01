@@ -88,12 +88,22 @@
                             {{ recording.status.title() }}
                         </span>
 
+                        <!-- Retry button for failed downloads -->
+                        {% if recording.status == 'failed' %}
+                            <button onclick="retryDownload()"
+                                    id="retry-download-btn"
+                                    class="px-3 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Retry downloading this recording">
+                                🔄 Retry Download
+                            </button>
+                        {% endif %}
+
                         <!-- Secondary status indicators (subtle) -->
                         {% if recording.status == 'completed' %}
                             {% set pp_status = recording.post_process_status or 'pending' %}
                             {% set trans_status = recording.transcription_status or 'pending' %}
                             <span class="text-xs text-gray-600">
-                                {% if pp_status == 'completed' %}• Segmented{% endif %}
+                                {% if pp_status == 'completed' %}• WAV Extracted{% endif %}
                                 {% if trans_status == 'completed' %} • Transcribed{% endif %}
                             </span>
 
@@ -111,6 +121,31 @@
                             {% endif %}
                         {% endif %}
                     </div>
+
+                    <!-- Download progress bar for downloading status -->
+                    {% if recording.status == 'downloading' %}
+                        <div class="mt-3">
+                            <div class="flex justify-between text-xs text-gray-600 mb-1">
+                                <div class="flex items-center gap-2">
+                                    <span>Downloading...</span>
+                                    <span id="download-speed" class="text-blue-600 font-medium">
+                                        {% if recording.download_speed %}{{ recording.download_speed }}{% endif %}
+                                    </span>
+                                </div>
+                                <span id="progress-percentage">{{ recording.download_progress or 0 }}%</span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div id="progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: {{ recording.download_progress or 0 }}%"></div>
+                            </div>
+                        </div>
+                    {% endif %}
+
+                    <!-- Error message for failed recordings -->
+                    {% if recording.status == 'failed' and recording.error_message %}
+                        <div class="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+                            <strong>Error:</strong> {{ recording.error_message }}
+                        </div>
+                    {% endif %}
                 </div>
 
                 <div class="bg-gray-50 p-4 rounded-lg">
@@ -138,6 +173,17 @@
                     <div class="text-gray-800 font-semibold">{{ recording.file_size_mb }} MB</div>
                 </div>
                 {% endif %}
+
+                {% if recording.pyannote_media_url %}
+                <div class="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <div class="text-blue-700 text-sm mb-1 font-semibold">☁️ Pyannote Cloud Upload</div>
+                    <div class="text-blue-600 text-xs font-mono break-all">{{ recording.pyannote_media_url }}</div>
+                    {% if recording.pyannote_upload_size_mb %}
+                    <div class="text-blue-600 text-xs mt-1">Uploaded: {{ "%.1f"|format(recording.pyannote_upload_size_mb) }} MB</div>
+                    {% endif %}
+                    <div class="text-blue-500 text-xs mt-1">✓ Available for reuse if diarization fails</div>
+                </div>
+                {% endif %}
             </div>
 
             {% if recording.post_process_error %}
@@ -148,11 +194,83 @@
             {% endif %}
         </div>
 
+        <!-- Post-Processing Card -->
+        {% if recording.status == 'completed' and recording.post_process_status != 'completed' %}
+        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
+            <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
+                <div>
+                    <h2 class="text-gray-800 text-2xl font-bold">🎵 Extract Audio</h2>
+                    <p class="text-gray-600 text-sm mt-1">Extract WAV audio for transcription and diarization</p>
+                </div>
+                <button id="postprocess-btn"
+                        class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        onclick="startPostProcessing()">
+                    <span id="postprocess-btn-text">Extract WAV</span>
+                    <span id="postprocess-btn-loading" class="hidden inline-flex items-center gap-2">
+                        <span class="loading"></span> Extracting...
+                    </span>
+                </button>
+            </div>
+            <div id="postprocess-status" class="text-sm text-gray-600">
+                {% if recording.post_process_status == 'pending' %}
+                    WAV audio has not been extracted yet. Click "Extract WAV" to prepare for transcription.
+                {% elif recording.post_process_status == 'processing' %}
+                    <span class="text-orange-600">⏳ Extracting audio...</span>
+                {% elif recording.post_process_status == 'failed' %}
+                    <span class="text-red-600">✕ Extraction failed: {{ recording.post_process_error }}</span>
+                {% endif %}
+            </div>
+
+            <!-- Post-processing logs -->
+            <div id="postprocess-logs" class="mt-4 space-y-1 {% if recording.post_process_status != 'processing' %}hidden{% endif %}">
+                <div class="text-xs font-semibold text-gray-700 mb-2">Progress:</div>
+                <div id="postprocess-logs-container" class="text-xs text-gray-600 space-y-1 max-h-60 overflow-y-auto bg-gray-50 rounded p-3">
+                    <!-- Logs will be inserted here -->
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Active Background Tasks Card -->
+        <div id="background-tasks-card" class="bg-white rounded-xl p-6 mb-8 shadow-lg hidden">
+            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">⚙️ Active Background Tasks</h2>
+            <div id="background-tasks-container" class="space-y-3">
+                <!-- Tasks will be loaded here -->
+            </div>
+        </div>
+
         <!-- Transcription Progress Card -->
         {% if recording.status == 'completed' %}
         <div id="transcription-progress-card" class="bg-white rounded-xl p-6 mb-8 shadow-lg">
             <div class="flex justify-between items-center mb-4 pb-3 border-b-2 border-gray-200">
-                <h2 class="text-gray-800 text-2xl font-bold">🎙️ Transcription Progress</h2>
+                <div class="flex items-center gap-3">
+                    <h2 class="text-gray-800 text-2xl font-bold">🎙️ Transcription Progress</h2>
+                    {% if recording.diarization_status %}
+                        {% if recording.diarization_status == 'running' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 inline-flex items-center gap-1">
+                                <span class="loading"></span>
+                                <span>Processing</span>
+                            </span>
+                        {% elif recording.diarization_status == 'completed' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                                ✅ Completed
+                            </span>
+                        {% elif recording.diarization_status == 'failed' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                                ❌ Failed
+                            </span>
+                        {% elif recording.diarization_status == 'pending' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-700">
+                                ⏳ Pending
+                            </span>
+                        {% endif %}
+                        {% if recording.pyannote_job_id %}
+                            <span class="text-xs text-gray-500" title="Pyannote Job ID">
+                                Job: {{ recording.pyannote_job_id[:8] }}...
+                            </span>
+                        {% endif %}
+                    {% endif %}
+                </div>
                 <button id="transcribe-btn"
                         class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         onclick="startOrResumeTranscription()">
@@ -270,108 +388,7 @@
         </div>
         {% endif %}
 
-        <!-- Segments Card -->
-        {% if recording.is_segmented and segments %}
-        <div id="segments" class="bg-white rounded-xl p-6 mb-8 shadow-lg">
-            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">
-                📊 Segments ({{ segments|length }})
-            </h2>
-
-            <div class="space-y-3">
-                {% for segment in segments %}
-                <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                        <div class="flex-1">
-                            <div class="text-gray-800 font-bold text-lg mb-2 flex items-center gap-2 flex-wrap">
-                                <span>Segment {{ segment.segment_number }}</span>
-                                {% if segment.has_transcript %}
-                                    <span class="inline-flex items-center gap-1 text-xs">
-                                        <span class="w-2 h-2 rounded-full bg-green-500"></span>
-                                        <span class="text-green-600">Transcribed</span>
-                                    </span>
-                                {% else %}
-                                    <span class="inline-flex items-center gap-1 text-xs">
-                                        <span class="w-2 h-2 rounded-full bg-orange-500"></span>
-                                        <span class="text-orange-600">No transcript</span>
-                                    </span>
-                                {% endif %}
-                            </div>
-                            <div class="text-gray-600 text-sm space-y-1">
-                                <div>
-                                    <span class="font-semibold">Time:</span>
-                                    {{ "%.1f"|format(segment.start_time_seconds / 60) }} - {{ "%.1f"|format(segment.end_time_seconds / 60) }} min
-                                </div>
-                                <div>
-                                    <span class="font-semibold">Duration:</span>
-                                    {{ "%.1f"|format(segment.duration_seconds / 60) }} minutes
-                                </div>
-                                {% if segment.file_size_bytes %}
-                                <div>
-                                    <span class="font-semibold">Size:</span>
-                                    {{ "%.1f"|format(segment.file_size_bytes / (1024**2)) }} MB
-                                </div>
-                                {% endif %}
-                            </div>
-                        </div>
-                        {% if segment.has_transcript and segment.transcript_path %}
-                            <div class="relative inline-block download-dropdown">
-                                <button class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg font-semibold text-sm inline-flex items-center gap-2"
-                                        onclick="toggleDropdown(event, 'download-segment-{{ segment.id }}')"
-                                        aria-haspopup="true"
-                                        aria-expanded="false"
-                                        aria-controls="download-segment-{{ segment.id }}">
-                                    📄 Download
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                                    </svg>
-                                </button>
-
-                                <div id="download-segment-{{ segment.id }}" class="hidden absolute right-0 mt-2 w-56 rounded-lg shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10" role="menu">
-                                    <div class="py-1">
-                                        <a href="/download/transcript/segment/{{ segment.id }}"
-                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                           role="menuitem">
-                                            📄 Transcript (JSON)
-                                        </a>
-                                        {% if segment.has_diarization_pyannote %}
-                                        <a href="/download/diarization/pyannote/segment/{{ segment.id }}"
-                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                           role="menuitem">
-                                            🎯 Pyannote Diarization
-                                        </a>
-                                        {% endif %}
-                                        {% if segment.has_diarization_gemini %}
-                                        <a href="/download/diarization/gemini/segment/{{ segment.id }}"
-                                           class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                           role="menuitem">
-                                            ✨ Gemini Refined
-                                        </a>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            </div>
-                        {% endif %}
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-        {% elif recording.status == 'completed' and not recording.is_segmented %}
-        <div class="bg-white rounded-xl p-6 mb-8 shadow-lg">
-            <h2 class="text-gray-800 text-2xl font-bold mb-4 pb-3 border-b-2 border-gray-200">📊 Segments</h2>
-            <div class="text-center py-10 text-gray-500">
-                <div class="text-5xl mb-4">✂️</div>
-                <p class="mb-4">This recording hasn't been segmented yet</p>
-                {% set pp_status = recording.post_process_status or 'pending' %}
-                {% if pp_status == 'pending' or pp_status == 'failed' %}
-                    <button class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                            onclick="window.location.href='/recordings'">
-                        Go to Recordings to Start Processing
-                    </button>
-                {% endif %}
-            </div>
-        </div>
-        {% endif %}
+        <!-- Segments removed - no longer using segmentation -->
 
         <!-- Logs Card -->
         {% if logs %}
@@ -410,6 +427,95 @@
     </div>
 
     <script>
+        // Poll for download progress updates
+        let progressInterval = null;
+
+        function startProgressPolling() {
+            const progressBar = document.getElementById('progress-bar');
+            const progressPercentage = document.getElementById('progress-percentage');
+            const downloadSpeed = document.getElementById('download-speed');
+
+            if (!progressBar || !progressPercentage) {
+                return; // Not on downloading status
+            }
+
+            progressInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/recordings/{{ recording.id }}/progress');
+                    const data = await response.json();
+
+                    if (data.success) {
+                        const progress = data.progress || 0;
+                        progressBar.style.width = progress + '%';
+                        progressPercentage.textContent = progress + '%';
+
+                        // Update download speed if available
+                        if (downloadSpeed && data.speed) {
+                            downloadSpeed.textContent = data.speed;
+                        }
+
+                        // If completed or failed, reload page
+                        if (data.status === 'completed' || data.status === 'failed') {
+                            clearInterval(progressInterval);
+                            setTimeout(() => {
+                                window.location.reload();
+                            }, 1000);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error fetching progress:', error);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        // Start polling if recording is downloading
+        {% if recording.status == 'downloading' %}
+        startProgressPolling();
+        {% endif %}
+
+        // Retry downloading a failed recording
+        async function retryDownload() {
+            const btn = document.getElementById('retry-download-btn');
+            if (!btn) return;
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Retrying...';
+
+            try {
+                const response = await fetch('/api/recordings/{{ recording.id }}/retry-download', {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    btn.textContent = '✓ Retry Started';
+                    btn.classList.remove('bg-red-600', 'hover:bg-red-700');
+                    btn.classList.add('bg-green-600');
+
+                    // Reload page to show downloading status with progress bar
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
+                } else {
+                    btn.textContent = '✕ Retry Failed';
+                    btn.disabled = false;
+                    alert('Failed to retry download: ' + (data.message || 'Unknown error'));
+                    setTimeout(() => {
+                        btn.textContent = '🔄 Retry Download';
+                    }, 3000);
+                }
+            } catch (error) {
+                console.error('Error retrying download:', error);
+                btn.textContent = '✕ Error';
+                btn.disabled = false;
+                alert('Error: ' + error.message);
+                setTimeout(() => {
+                    btn.textContent = '🔄 Retry Download';
+                }, 3000);
+            }
+        }
+
         // Display speaker cards
         function displaySpeakers(speakers) {
             const speakersCard = document.getElementById('speakers-card');
@@ -545,13 +651,12 @@
 
         const STEP_NAMES = {
             'extraction': '📁 Audio Extraction',
-            'whisper': '🎯 Speech Recognition (Whisper)',
-            'diarization': '👥 Speaker Identification (Pyannote)',
-            'merge': '🔗 Merge Transcription & Speakers',
+            'diarization': '🎯👥 Transcription + Diarization (Pyannote)',
             'gemini': '✨ Speaker Refinement (Gemini)'
         };
 
-        const STEP_ORDER = ['extraction', 'whisper', 'diarization', 'merge', 'gemini'];
+        // Simplified flow: extraction → pyannote (transcription+diarization) → gemini
+        const STEP_ORDER = ['extraction', 'diarization', 'gemini'];
 
         function getStepIcon(status) {
             switch (status) {
@@ -573,7 +678,7 @@
             }
         }
 
-        function renderTranscriptionSteps(steps, overall_status) {
+        function renderTranscriptionSteps(steps, overall_status, progress) {
             const container = document.getElementById('transcription-steps');
             const card = document.getElementById('transcription-progress-card');
             const transcribeBtn = document.getElementById('transcribe-btn');
@@ -598,10 +703,8 @@
             const canRunStep = (stepName) => {
                 const stepDeps = {
                     'extraction': [],
-                    'whisper': ['extraction'],
                     'diarization': ['extraction'],
-                    'merge': ['whisper', 'diarization'],
-                    'gemini': ['merge']
+                    'gemini': ['diarization']
                 };
 
                 const deps = stepDeps[stepName] || [];
@@ -630,14 +733,60 @@
                     extraInfo = `<div class="text-xs text-gray-500 mt-1">Last updated: ${time}</div>`;
                 }
 
+                // Show progress bar for diarization step (transcription + diarization)
+                if (stepKey === 'diarization' && progress && progress.stage === 'diarization') {
+                    const percent = progress.percent || 0;
+                    const current = progress.current || 0;
+                    const total = progress.total || 0;
+
+                    if (progress.step === 'analyzing' && percent > 0) {
+                        // Show detailed progress
+                        extraInfo += `
+                            <div class="mt-3">
+                                <div class="flex justify-between text-xs text-gray-600 mb-1">
+                                    <span>Processing with Pyannote...</span>
+                                    <span>${current}s / ${total}s (${percent}%)</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: ${percent}%"></div>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        // Show indeterminate state (starting up or preparing)
+                        const label = progress.step === 'preparing' ? 'Submitting job to Pyannote...' : 'Uploading to Pyannote API...';
+                        extraInfo += `
+                            <div class="mt-3">
+                                <div class="flex justify-between text-xs text-gray-600 mb-1">
+                                    <span>${label}</span>
+                                    <span class="loading"></span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2">
+                                    <div class="bg-blue-600 h-2 rounded-full animate-pulse" style="width: 100%"></div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+
                 // Build action buttons
                 let buttons = '';
+
+                // Preview Prompt button for Gemini step (show if diarization is completed)
+                if (stepKey === 'gemini' && steps['diarization']?.status === 'completed') {
+                    buttons += `
+                        <button onclick="showGeminiPromptPreview()"
+                                class="px-3 py-1 text-xs bg-purple-500 text-white rounded hover:bg-purple-600 transition">
+                            👁️ Preview Prompt
+                        </button>
+                    `;
+                }
 
                 // Reset button for latest completed step
                 if (isLatestCompleted) {
                     buttons += `
                         <button onclick="resetStep('${stepKey}')"
-                                class="px-3 py-1 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 transition">
+                                class="px-3 py-1 text-xs bg-orange-500 text-white rounded hover:bg-orange-600 transition ml-2">
                             🔄 Reset
                         </button>
                     `;
@@ -719,7 +868,7 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    renderTranscriptionSteps(data.steps || {}, data.status);
+                    renderTranscriptionSteps(data.steps || {}, data.status, data.progress);
 
                     // Show completion message
                     if (data.status === 'completed') {
@@ -757,6 +906,8 @@
                 if (data.success) {
                     // Reload status to show transcription has started
                     loadTranscriptionStatus();
+                    // Start polling for progress updates
+                    startTranscriptionProgressPolling();
                 } else {
                     alert(`❌ ${data.error || 'Failed to start transcription'}`);
                     btn.disabled = false;
@@ -777,7 +928,7 @@
 
             // Confirmation dialog
             const confirmMsg = `Run ${stepDisplayName}?\n\n` +
-                `This will execute this step (and any dependent steps if needed).\n\n` +
+                `This will execute only this specific step independently.\n\n` +
                 `Continue?`;
 
             if (!confirm(confirmMsg)) {
@@ -785,39 +936,128 @@
             }
 
             try {
-                // First, call the run-step endpoint to validate
-                const validateResponse = await fetch('/api/recordings/{{ recording.id }}/transcription/run-step', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ step: stepName })
-                });
+                // Map step names to their individual endpoints
+                const stepEndpoints = {
+                    'extraction': '/api/recordings/{{ recording.id }}/extract-audio',
+                    'diarization': '/api/recordings/{{ recording.id }}/run-diarization',
+                    'gemini': '/api/recordings/{{ recording.id }}/run-gemini-refinement'
+                };
 
-                const validateData = await validateResponse.json();
+                const endpoint = stepEndpoints[stepName] || '/api/recordings/{{ recording.id }}/transcribe';
 
-                if (!validateData.success) {
-                    alert(`❌ Cannot run step: ${validateData.error}`);
-                    return;
-                }
-
-                // Now trigger the actual transcription
-                const transcribeResponse = await fetch('/api/recordings/{{ recording.id }}/transcribe', {
+                // Call the specific step endpoint
+                const response = await fetch(endpoint, {
                     method: 'POST'
                 });
 
-                const transcribeData = await transcribeResponse.json();
+                const data = await response.json();
 
-                if (transcribeData.success) {
-                    alert(`✅ ${stepDisplayName} started!\n\nThe transcription is running in the background.\nRefresh the page to see progress.`);
+                if (data.success) {
+                    alert(`✅ ${stepDisplayName} started!\n\n${data.message}\n\nRefresh the page to see progress.`);
                     // Reload status to show updated state
                     setTimeout(() => loadTranscriptionStatus(), 1000);
                 } else {
-                    alert(`❌ ${transcribeData.error || 'Failed to start transcription'}`);
+                    alert(`❌ ${data.error || 'Failed to start step'}`);
                 }
             } catch (error) {
                 console.error('Error running step:', error);
                 alert('❌ Error running step');
+            }
+        }
+
+        // Show Gemini prompt preview
+        async function showGeminiPromptPreview() {
+            try {
+                const response = await fetch('/api/recordings/{{ recording.id }}/gemini-prompt-preview');
+                const data = await response.json();
+
+                if (data.success) {
+                    // Create modal
+                    const modal = document.createElement('div');
+                    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+                    modal.onclick = (e) => {
+                        if (e.target === modal) modal.remove();
+                    };
+
+                    const stats = data.stats;
+                    const statsHtml = `
+                        <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+                            <div class="bg-gray-50 p-3 rounded">
+                                <div class="text-gray-600">Segments</div>
+                                <div class="font-semibold text-lg">${stats.num_segments}</div>
+                            </div>
+                            <div class="bg-gray-50 p-3 rounded">
+                                <div class="text-gray-600">Expected Speakers</div>
+                                <div class="font-semibold text-lg">${stats.num_speakers}</div>
+                            </div>
+                            <div class="bg-gray-50 p-3 rounded">
+                                <div class="text-gray-600">Prompt Length</div>
+                                <div class="font-semibold text-lg">${stats.prompt_length_chars.toLocaleString()} chars</div>
+                            </div>
+                            <div class="bg-gray-50 p-3 rounded">
+                                <div class="text-gray-600">Estimated Tokens</div>
+                                <div class="font-semibold text-lg">~${stats.estimated_tokens.toLocaleString()}</div>
+                            </div>
+                        </div>
+                    `;
+
+                    modal.innerHTML = `
+                        <div class="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+                            <div class="p-6 border-b border-gray-200 flex justify-between items-center">
+                                <h2 class="text-2xl font-bold text-gray-800">🤖 Gemini Prompt Preview</h2>
+                                <button onclick="this.closest('.fixed').remove()"
+                                        class="text-gray-500 hover:text-gray-700 text-2xl leading-none"
+                                        title="Close">
+                                    ×
+                                </button>
+                            </div>
+                            <div class="p-6 overflow-y-auto flex-1">
+                                ${statsHtml}
+                                <div class="mb-4">
+                                    <div class="flex justify-between items-center mb-2">
+                                        <h3 class="font-semibold text-gray-700">Prompt that will be sent to Gemini:</h3>
+                                        <button onclick="copyPromptToClipboard()"
+                                                class="px-3 py-1 text-xs bg-indigo-500 text-white rounded hover:bg-indigo-600 transition">
+                                            📋 Copy
+                                        </button>
+                                    </div>
+                                    <pre id="prompt-text" class="bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-sm whitespace-pre-wrap">${escapeHtml(data.prompt)}</pre>
+                                </div>
+                            </div>
+                            <div class="p-6 border-t border-gray-200 flex justify-end gap-2">
+                                <button onclick="this.closest('.fixed').remove()"
+                                        class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition">
+                                    Close
+                                </button>
+                            </div>
+                        </div>
+                    `;
+
+                    document.body.appendChild(modal);
+
+                    // Add copy function to window
+                    window.copyPromptToClipboard = async function() {
+                        const promptText = data.prompt;
+                        try {
+                            await navigator.clipboard.writeText(promptText);
+                            alert('✅ Prompt copied to clipboard!');
+                        } catch (err) {
+                            console.error('Failed to copy:', err);
+                            // Fallback: select text
+                            const promptElement = document.getElementById('prompt-text');
+                            const range = document.createRange();
+                            range.selectNode(promptElement);
+                            window.getSelection().removeAllRanges();
+                            window.getSelection().addRange(range);
+                            alert('Prompt text selected. Press Ctrl+C (or Cmd+C) to copy.');
+                        }
+                    };
+                } else {
+                    alert(`❌ ${data.error || 'Failed to generate prompt preview'}`);
+                }
+            } catch (error) {
+                console.error('Error fetching prompt preview:', error);
+                alert('❌ Error fetching prompt preview');
             }
         }
 
@@ -867,8 +1107,194 @@
             }
         }
 
+        // ========================================================================
+        // Background Tasks Display
+        // ========================================================================
+
+        function renderBackgroundTasks(tasks) {
+            const card = document.getElementById('background-tasks-card');
+            const container = document.getElementById('background-tasks-container');
+
+            // Filter for running tasks only
+            const runningTasks = tasks ? tasks.filter(t => t.status === 'running') : [];
+
+            if (!tasks || tasks.length === 0) {
+                card.classList.add('hidden');
+                return;
+            }
+
+            card.classList.remove('hidden');
+            container.innerHTML = '';
+
+            // Update page title with running task count
+            const originalTitle = document.title;
+            if (runningTasks.length > 0 && !originalTitle.startsWith('(')) {
+                document.title = `(${runningTasks.length}) ${originalTitle}`;
+            } else if (runningTasks.length === 0 && originalTitle.startsWith('(')) {
+                document.title = originalTitle.replace(/^\(\d+\)\s*/, '');
+            }
+
+            tasks.forEach(task => {
+                const taskDiv = document.createElement('div');
+                const isRunning = task.status === 'running';
+                const isFailed = task.status === 'failed';
+                const isCompleted = task.status === 'completed';
+
+                let statusColor = 'bg-blue-100 border-blue-300 text-blue-800';
+                let statusIcon = '⏳';
+                if (isCompleted) {
+                    statusColor = 'bg-green-100 border-green-300 text-green-800';
+                    statusIcon = '✅';
+                } else if (isFailed) {
+                    statusColor = 'bg-red-100 border-red-300 text-red-800';
+                    statusIcon = '❌';
+                }
+
+                taskDiv.className = `p-4 rounded-lg border-2 ${statusColor}`;
+
+                const typeLabels = {
+                    'gemini_refinement': '✨ Speaker Refinement (Gemini)',
+                    'diarization': '🎯 Transcription + Diarization',
+                    'transcription': '🎙️ Transcription',
+                    'postprocess': '🎵 Audio Extraction'
+                };
+
+                const typeLabel = typeLabels[task.task_type] || task.task_type;
+                const elapsed = task.elapsed_seconds;
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = elapsed % 60;
+                const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+
+                let progressHtml = '';
+                if (task.progress && isRunning) {
+                    progressHtml = `<div class="text-sm mt-2 text-gray-600">${escapeHtml(task.progress)}</div>`;
+                }
+
+                let errorHtml = '';
+                if (task.error) {
+                    errorHtml = `<div class="text-sm mt-2 text-red-600"><strong>Error:</strong> ${escapeHtml(task.error)}</div>`;
+                }
+
+                taskDiv.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="text-2xl">${statusIcon}</span>
+                            <div>
+                                <div class="font-semibold">${typeLabel}</div>
+                                <div class="text-xs text-gray-600">${task.description}</div>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm font-semibold capitalize">${task.status}</div>
+                            <div class="text-xs text-gray-600">${timeStr} elapsed</div>
+                        </div>
+                    </div>
+                    ${progressHtml}
+                    ${errorHtml}
+                `;
+
+                container.appendChild(taskDiv);
+            });
+        }
+
+        async function loadBackgroundTasks() {
+            try {
+                const response = await fetch('/api/recordings/{{ recording.id }}/background-tasks');
+                const data = await response.json();
+
+                if (data.success) {
+                    renderBackgroundTasks(data.tasks);
+                }
+            } catch (error) {
+                console.error('Error loading background tasks:', error);
+            }
+        }
+
         // Load transcription status on page load
         loadTranscriptionStatus();
+        loadBackgroundTasks();
+
+        // Poll for background tasks updates
+        let backgroundTasksInterval = null;
+
+        function startBackgroundTasksPolling() {
+            // Clear any existing interval
+            if (backgroundTasksInterval) {
+                clearInterval(backgroundTasksInterval);
+            }
+
+            // Poll every 2 seconds
+            backgroundTasksInterval = setInterval(async () => {
+                await loadBackgroundTasks();
+
+                // Check if all tasks are completed/failed
+                const container = document.getElementById('background-tasks-container');
+                if (container && container.children.length === 0) {
+                    // No active tasks, stop polling and reload page to show updated state
+                    clearInterval(backgroundTasksInterval);
+                    backgroundTasksInterval = null;
+                    setTimeout(() => window.location.reload(), 1000);
+                }
+            }, 2000);
+        }
+
+        function stopBackgroundTasksPolling() {
+            if (backgroundTasksInterval) {
+                clearInterval(backgroundTasksInterval);
+                backgroundTasksInterval = null;
+            }
+        }
+
+        // Start polling if there are initial tasks
+        setTimeout(() => {
+            const container = document.getElementById('background-tasks-container');
+            if (container && container.children.length > 0) {
+                startBackgroundTasksPolling();
+            }
+        }, 500);
+
+        // Poll for transcription progress updates
+        let transcriptionProgressInterval = null;
+
+        function startTranscriptionProgressPolling() {
+            // Clear any existing interval
+            if (transcriptionProgressInterval) {
+                clearInterval(transcriptionProgressInterval);
+            }
+
+            // Poll every 2 seconds
+            transcriptionProgressInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/recordings/{{ recording.id }}/transcription-status');
+                    const data = await response.json();
+
+                    if (data.success) {
+                        // Update the UI with latest status
+                        renderTranscriptionSteps(data.steps || {}, data.status, data.progress);
+
+                        // Stop polling if transcription completed or failed
+                        if (data.status === 'completed' || data.status === 'failed') {
+                            clearInterval(transcriptionProgressInterval);
+                            transcriptionProgressInterval = null;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error polling transcription progress:', error);
+                }
+            }, 2000);
+        }
+
+        function stopTranscriptionProgressPolling() {
+            if (transcriptionProgressInterval) {
+                clearInterval(transcriptionProgressInterval);
+                transcriptionProgressInterval = null;
+            }
+        }
+
+        // Start polling if transcription is in progress
+        {% if recording.transcription_status == 'processing' %}
+        startTranscriptionProgressPolling();
+        {% endif %}
 
         // Reset transcription status
         async function resetTranscriptionStatus() {
@@ -990,6 +1416,122 @@
         } else {
             initDropdownAccessibility();
         }
+
+        // Post-processing functionality
+        let postprocessInterval = null;
+        let lastPostprocessLogId = 0;
+
+        function startPostProcessing() {
+            const btn = document.getElementById('postprocess-btn');
+            const btnText = document.getElementById('postprocess-btn-text');
+            const btnLoading = document.getElementById('postprocess-btn-loading');
+            const statusDiv = document.getElementById('postprocess-status');
+            const logsDiv = document.getElementById('postprocess-logs');
+            const logsContainer = document.getElementById('postprocess-logs-container');
+
+            if (btn.disabled) return;
+
+            if (!confirm('This will extract the audio from the video for transcription. This may take several minutes. Continue?')) {
+                return;
+            }
+
+            // Disable button and show loading
+            btn.disabled = true;
+            btnText.classList.add('hidden');
+            btnLoading.classList.remove('hidden');
+            statusDiv.innerHTML = '<span class="text-orange-600">⏳ Extracting audio from video...</span>';
+            logsDiv.classList.remove('hidden');
+            logsContainer.innerHTML = '';
+            lastPostprocessLogId = 0;
+
+            fetch('/api/recordings/{{ recording.id }}/postprocess', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    statusDiv.innerHTML = '<span class="text-orange-600">⏳ ' + data.message + '</span>';
+                    // Start polling for progress
+                    startPostprocessPolling();
+                } else {
+                    statusDiv.innerHTML = '<span class="text-red-600">✕ Error: ' + data.error + '</span>';
+                    btn.disabled = false;
+                    btnText.classList.remove('hidden');
+                    btnLoading.classList.add('hidden');
+                    logsDiv.classList.add('hidden');
+                }
+            })
+            .catch(error => {
+                console.error('Post-processing error:', error);
+                statusDiv.innerHTML = '<span class="text-red-600">✕ Failed to start post-processing</span>';
+                btn.disabled = false;
+                btnText.classList.remove('hidden');
+                btnLoading.classList.add('hidden');
+                logsDiv.classList.add('hidden');
+            });
+        }
+
+        function startPostprocessPolling() {
+            if (postprocessInterval) {
+                clearInterval(postprocessInterval);
+            }
+
+            postprocessInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/recordings/{{ recording.id }}/logs?since=' + lastPostprocessLogId);
+                    const data = await response.json();
+
+                    if (data.logs && data.logs.length > 0) {
+                        const logsContainer = document.getElementById('postprocess-logs-container');
+                        data.logs.forEach(log => {
+                            if (log.id > lastPostprocessLogId) {
+                                const logEntry = document.createElement('div');
+                                logEntry.className = 'text-xs';
+                                const timestamp = new Date(log.created_at).toLocaleTimeString();
+                                const levelClass = log.level === 'error' ? 'text-red-600' : log.level === 'warning' ? 'text-orange-600' : 'text-gray-600';
+                                logEntry.innerHTML = `<span class="text-gray-400">[${timestamp}]</span> <span class="${levelClass}">${log.message}</span>`;
+                                logsContainer.appendChild(logEntry);
+                                lastPostprocessLogId = log.id;
+                            }
+                        });
+                        // Auto-scroll to bottom
+                        logsContainer.scrollTop = logsContainer.scrollHeight;
+                    }
+
+                    // Check if post-processing completed or failed
+                    const statusResponse = await fetch('/api/recordings/{{ recording.id }}');
+                    const statusData = await statusResponse.json();
+
+                    if (statusData.recording.post_process_status === 'completed') {
+                        clearInterval(postprocessInterval);
+                        document.getElementById('postprocess-status').innerHTML = '<span class="text-green-600">✓ Post-processing completed</span>';
+                        // Reload page after 2 seconds to show updated status
+                        setTimeout(() => window.location.reload(), 2000);
+                    } else if (statusData.recording.post_process_status === 'failed') {
+                        clearInterval(postprocessInterval);
+                        document.getElementById('postprocess-status').innerHTML = '<span class="text-red-600">✕ Post-processing failed</span>';
+                        const btn = document.getElementById('postprocess-btn');
+                        const btnText = document.getElementById('postprocess-btn-text');
+                        const btnLoading = document.getElementById('postprocess-btn-loading');
+                        btn.disabled = false;
+                        btnText.classList.remove('hidden');
+                        btnLoading.classList.add('hidden');
+                    }
+                } catch (error) {
+                    console.error('Error polling post-processing status:', error);
+                }
+            }, 2000); // Poll every 2 seconds
+        }
+
+        // Start polling if already post-processing
+        {% if recording.post_process_status == 'processing' %}
+        document.addEventListener('DOMContentLoaded', () => {
+            startPostprocessPolling();
+        });
+        {% endif %}
     </script>
 </body>
 </html>

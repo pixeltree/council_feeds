@@ -20,11 +20,7 @@ from config import (
     CALGARY_TZ,
     OUTPUT_DIR,
     FFMPEG_COMMAND,
-    ENABLE_POST_PROCESSING,
-    POST_PROCESS_SILENCE_THRESHOLD_DB,
-    POST_PROCESS_MIN_SILENCE_DURATION,
     ENABLE_TRANSCRIPTION,
-    WHISPER_MODEL,
     PYANNOTE_API_TOKEN,
     ENABLE_SEGMENTED_RECORDING,
 )
@@ -46,15 +42,12 @@ class RecordingService:
         ffmpeg_command: str = FFMPEG_COMMAND,
         timezone: Any = CALGARY_TZ,
         stream_service: Optional[StreamService] = None,
-        transcription_service: Optional["TranscriptionService"] = None,
-        post_processor: Optional["PostProcessor"] = None
-    ):
+        transcription_service: Optional["TranscriptionService"] = None):
         self.output_dir = output_dir
         self.ffmpeg_command = ffmpeg_command
         self.timezone = timezone
         self.stream_service = stream_service or StreamService()
         self.transcription_service = transcription_service
-        self.post_processor = post_processor
         self.current_process: Optional[subprocess.Popen[bytes]] = None
         self.current_recording_id: Optional[int] = None
         self.logger = logging.getLogger(__name__)
@@ -111,46 +104,6 @@ class RecordingService:
         db.log_stream_status(stream_url, 'live', meeting_id, 'Recording started')
         return recording_id
 
-    def _run_post_processing(self, output_file: str, recording_id: int) -> bool:
-        """Run post-processing on the recording.
-
-        Args:
-            output_file: Path to the recording file
-            recording_id: Database ID of the recording
-
-        Returns:
-            True if post-processing deleted the file (skip transcription), False otherwise
-        """
-        if not ENABLE_POST_PROCESSING:
-            return False
-
-        self.logger.info("[EXPERIMENTAL] Post-processing enabled - splitting recording into segments")
-        try:
-            # Use injected post processor or create a default one
-            if self.post_processor is None:
-                from post_processor import PostProcessor
-                processor = PostProcessor(
-                    silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-                    min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
-                    ffmpeg_command=self.ffmpeg_command
-                )
-            else:
-                processor = self.post_processor
-
-            result = processor.process_recording(output_file, recording_id)
-            if result.get('success'):
-                self.logger.info(f"[POST-PROCESS] Successfully created {result.get('segments_created', 0)} segments")
-            elif result.get('deleted'):
-                self.logger.warning(f"[POST-PROCESS] Recording removed: {result.get('message', 'No audio detected')}")
-                return True  # File was deleted
-            else:
-                self.logger.error(f"[POST-PROCESS] Processing failed: {result.get('error', 'Unknown error')}")
-        except Exception as e:
-            self.logger.error(f"[POST-PROCESS] Error during post-processing: {e}", exc_info=True)
-            self.logger.info("[POST-PROCESS] Original recording preserved")
-
-        return False
-
     def _run_transcription(self, output_file: str, recording_id: int) -> None:
         """Run transcription on the recording.
 
@@ -166,9 +119,10 @@ class RecordingService:
             # Use injected transcription service or create a default one
             if self.transcription_service is None:
                 from transcription_service import TranscriptionService
+                from config import PYANNOTE_SEGMENTATION_THRESHOLD
                 transcriber = TranscriptionService(
-                    whisper_model=WHISPER_MODEL,
-                    pyannote_api_token=PYANNOTE_API_TOKEN
+                    pyannote_api_token=PYANNOTE_API_TOKEN,
+                    pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
                 )
             else:
                 transcriber = self.transcription_service
@@ -272,11 +226,6 @@ class RecordingService:
 
             # Update recording status in database as completed
             db.update_recording(recording_id, end_time, 'completed')
-
-            # Run post-processing if enabled
-            file_was_deleted = self._run_post_processing(output_file, recording_id)
-            if file_was_deleted:
-                return True  # Skip transcription since file was deleted
 
             # Run transcription if enabled
             self._run_transcription(output_file, recording_id)

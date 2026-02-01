@@ -22,37 +22,29 @@ class TranscriptionService:
 
     def __init__(
         self,
-        whisper_model: str = "base",
         pyannote_api_token: Optional[str] = None,
-        device: Optional[str] = None
+        pyannote_segmentation_threshold: float = 0.3
     ):
         """
         Initialize transcription service.
 
         Args:
-            whisper_model: Whisper model size (tiny, base, small, medium, large)
-            pyannote_api_token: pyannote.ai API token (required for diarization)
-            device: Device to use for Whisper ('cpu', 'cuda', or None for auto-detect)
+            pyannote_api_token: pyannote.ai API token (required for transcription + diarization)
+            pyannote_segmentation_threshold: Threshold for speaker segmentation (0.0-1.0)
         """
         self.logger = logging.getLogger(__name__)
 
         # Initialize modular components
         self.audio_processor = AudioProcessor()
-        self.whisper_service = WhisperService(model=whisper_model, device=device)
-        self.diarization_service = DiarizationService(api_token=pyannote_api_token)
+        self.diarization_service = DiarizationService(
+            api_token=pyannote_api_token,
+            segmentation_threshold=pyannote_segmentation_threshold,
+            enable_transcription=True  # Always use pyannote for transcription
+        )
         self.merger = TranscriptMerger()
 
         # Keep these for backward compatibility
-        self.whisper_model_name = whisper_model
         self.pyannote_api_token = pyannote_api_token
-        self.device = self.whisper_service.device
-
-        # Lazy load reference for backward compatibility
-        self._whisper_model = None
-
-    def _load_whisper_model(self):
-        """Lazy load Whisper model (for backward compatibility)."""
-        return self.whisper_service._load_model()
 
     def extract_audio_to_wav(
         self,
@@ -82,30 +74,6 @@ class TranscriptionService:
             segment_number
         )
 
-    def transcribe_audio(
-        self,
-        audio_path: str,
-        recording_id: Optional[int] = None,
-        segment_number: Optional[int] = None
-    ) -> Dict:
-        """
-        Transcribe audio file using Whisper.
-
-        Delegates to WhisperService.
-
-        Args:
-            audio_path: Path to audio/video file
-            recording_id: Optional recording ID for logging
-            segment_number: Optional segment number for logging
-
-        Returns:
-            Dictionary with transcription results
-        """
-        return self.whisper_service.transcribe_audio(
-            audio_path,
-            recording_id,
-            segment_number
-        )
 
     def perform_diarization(
         self,
@@ -242,93 +210,51 @@ class TranscriptionService:
 
         audio_wav_path = self.extract_audio_to_wav(video_path, recording_id=recording_id, segment_number=segment_number)
 
-        # Step 1 & 2: Run Whisper and Diarization in parallel (if not already completed)
+        # Step 1: Run pyannote for transcription + diarization (if not already completed)
         transcription = None
         pyannote_path = video_path + '.diarization.pyannote.json'
-        whisper_path = video_path + '.whisper.json'
-
-        # Check if we can skip Whisper (whisper file exists)
-        whisper_already_done = steps.get('whisper', {}).get('status') == 'completed' and os.path.exists(whisper_path)
         diarization_already_done = steps.get('diarization', {}).get('status') == 'completed' and os.path.exists(pyannote_path)
 
-        if whisper_already_done:
-            # Load existing transcription from saved file
-            self.logger.info("Whisper already completed - loading from file")
-            if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Whisper transcription already completed - loading from file', 'info')
-            with open(whisper_path, 'r', encoding='utf-8') as f:
-                transcript_data = json.load(f)
-                # Reconstruct transcription dict from saved transcript
-                transcription = {
-                    'language': transcript_data.get('language', 'en'),
-                    'text': transcript_data.get('full_text', ''),
-                    'segments': transcript_data.get('segments', [])
-                }
-
-        # Load or run diarization
         diarization_segments = None
         pyannote_diarization = None
 
         if diarization_already_done:
             # Load existing diarization from file
-            self.logger.info("Diarization already completed - loading from file")
+            self.logger.info("Transcription + diarization already completed - loading from file")
             if recording_id:
-                db.add_transcription_log(recording_id, f'{prefix}Speaker diarization already completed - loading from file', 'info')
+                db.add_transcription_log(recording_id, f'{prefix}Transcription + diarization already completed - loading from file', 'info')
 
             with open(pyannote_path, 'r', encoding='utf-8') as f:
                 pyannote_diarization = json.load(f)
                 diarization_segments = pyannote_diarization.get('segments', [])
-
-        # Run Whisper and Diarization in parallel if either is not done
-        if not whisper_already_done or not diarization_already_done:
+        else:
+            # Run pyannote for both transcription and diarization in one API call
+            self.logger.info("Using pyannote for transcription + diarization...")
             if recording_id:
-                if not whisper_already_done:
-                    db.update_transcription_progress(recording_id, {'stage': 'whisper', 'step': 'transcribing'})
-                if not diarization_already_done:
-                    db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
+                db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'analyzing'})
 
-            self.logger.info("Running Whisper and Diarization in parallel...")
+            diarization_segments = self.perform_diarization(
+                audio_wav_path,
+                recording_id=recording_id,
+                segment_number=segment_number
+            )
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                # Submit tasks
-                futures = {}
-
-                if not whisper_already_done:
-                    whisper_future = executor.submit(
-                        self.transcribe_audio,
-                        audio_wav_path,
-                        recording_id=recording_id,
-                        segment_number=segment_number
-                    )
-                    futures['whisper'] = whisper_future
-
-                if not diarization_already_done:
-                    diarization_future = executor.submit(
-                        self.perform_diarization,
-                        audio_wav_path,
-                        recording_id=recording_id,
-                        segment_number=segment_number
-                    )
-                    futures['diarization'] = diarization_future
-
-                # Wait for results and save immediately for resumability
-                # Note: Both results are saved immediately after completion to ensure
-                # that if one task fails, the other can be resumed without re-execution
-                if 'whisper' in futures:
-                    transcription = futures['whisper'].result()
-
-                    # Save Whisper output immediately for resumability
-                    whisper_output_path = video_path + '.whisper.json'
-                    with open(whisper_output_path, 'w', encoding='utf-8') as f:
-                        json.dump({
-                            'language': transcription.get('language', 'en'),
-                            'full_text': transcription['text'],
-                            'segments': transcription['segments']
-                        }, f, indent=2, ensure_ascii=False)
-                    self.logger.info(f"Whisper output saved: {whisper_output_path}")
-
-                if 'diarization' in futures:
-                    diarization_segments = futures['diarization'].result()
+        # Extract transcription from diarization segments
+        if diarization_segments:
+            from config import TRANSCRIPTION_LANGUAGE
+            # Build transcription from segments
+            transcription = {
+                'language': TRANSCRIPTION_LANGUAGE,
+                'text': ' '.join(seg.get('text', '') for seg in diarization_segments if seg.get('text')),
+                'segments': [
+                    {
+                        'start': seg['start'],
+                        'end': seg['end'],
+                        'text': seg.get('text', '')
+                    }
+                    for seg in diarization_segments if seg.get('text')
+                ]
+            }
 
         # Create pyannote diarization JSON structure (only if not loaded from file)
         if pyannote_diarization is None and diarization_segments is not None:
@@ -346,29 +272,17 @@ class TranscriptionService:
                 json.dump(pyannote_diarization, f, indent=2, ensure_ascii=False)
             self.logger.info(f"Pyannote diarization saved: {pyannote_path}")
 
-        # Step 3: Merge transcription with diarization (before Gemini)
-        if recording_id:
-            prefix = f"Segment {segment_number}: " if segment_number else ""
-            db.update_transcription_progress(recording_id, {'stage': 'merging', 'step': 'combining'})
-            db.add_transcription_log(recording_id, f'{prefix}Merging transcription with speaker labels', 'info')
-
-        merged_segments = self.merge_transcription_and_diarization(
-            transcription, diarization_segments
-        )
-
-        if recording_id:
-            db.add_transcription_log(recording_id, f'{prefix}Initial merge completed', 'info')
-
-        # Create merged transcript structure for Gemini
+        # Step 2: Prepare transcript for Gemini refinement
+        # No merge step needed - pyannote already returns combined transcription + diarization
         merged_transcript = {
             'file': video_path,
             'language': transcription.get('language', 'en'),
-            'segments': merged_segments,
+            'segments': diarization_segments,  # Already have both text and speaker
             'full_text': transcription['text'],
-            'num_speakers': len(set(seg['speaker'] for seg in merged_segments))
+            'num_speakers': len(set(seg['speaker'] for seg in diarization_segments))
         }
 
-        # Step 4: Attempt Gemini refinement if enabled
+        # Step 3: Attempt Gemini refinement if enabled
         final_transcript = self._apply_gemini_refinement(
             merged_transcript,
             video_path,
@@ -382,6 +296,33 @@ class TranscriptionService:
         if recording_id and save_to_file:
             gemini_path = video_path + '.diarization.gemini.json'
             db.update_recording_diarization_paths(recording_id, pyannote_path, gemini_path)
+
+            # Extract and update refined speakers list if Gemini refinement was successful
+            if final_transcript.get('refined_by') == 'gemini':
+                refined_speakers = set()
+                for segment in final_transcript.get('segments', []):
+                    speaker = segment.get('speaker')
+                    if speaker and not speaker.startswith('SPEAKER_'):
+                        # Only include refined speakers (not generic SPEAKER_XX)
+                        refined_speakers.add(speaker)
+
+                if refined_speakers:
+                    refined_speakers_list = [
+                        {
+                            'name': speaker,
+                            'role': speaker.split()[0] if ' ' in speaker else 'Unknown',
+                            'confidence': 'high'
+                        }
+                        for speaker in sorted(refined_speakers)
+                    ]
+                    db.update_recording_speakers(recording_id, refined_speakers_list)
+                    self.logger.info(f"Updated database with {len(refined_speakers_list)} refined speakers")
+                    if recording_id:
+                        db.add_recording_log(
+                            recording_id,
+                            f'Updated speaker list with {len(refined_speakers_list)} refined speakers: {", ".join(sorted(refined_speakers))}',
+                            'info'
+                        )
 
         # Also save pyannote-only version for backward compatibility
         if save_to_file:

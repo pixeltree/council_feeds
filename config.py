@@ -73,19 +73,16 @@ WEB_PORT = int(os.getenv("WEB_PORT", "5000"))
 FFMPEG_COMMAND = os.getenv("FFMPEG_COMMAND", "ffmpeg")
 YTDLP_COMMAND = os.getenv("YTDLP_COMMAND", "yt-dlp")
 
-# Post-processing settings (experimental)
-ENABLE_POST_PROCESSING = os.getenv("ENABLE_POST_PROCESSING", "false").lower() == "true"
-POST_PROCESS_SILENCE_THRESHOLD_DB = int(os.getenv("POST_PROCESS_SILENCE_THRESHOLD_DB", "-40"))
-POST_PROCESS_MIN_SILENCE_DURATION = int(os.getenv("POST_PROCESS_MIN_SILENCE_DURATION", "120"))  # seconds
-
-# Audio detection thresholds (used for both static detection and post-processing)
+# Audio detection thresholds (used for static detection)
 AUDIO_DETECTION_MEAN_THRESHOLD_DB = -50  # Mean volume threshold for detecting silence
 AUDIO_DETECTION_MAX_THRESHOLD_DB = -30  # Max volume threshold for detecting silence
 
 # Transcription settings
 ENABLE_TRANSCRIPTION = os.getenv("ENABLE_TRANSCRIPTION", "false").lower() == "true"
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")  # tiny, base, small, medium, large
-PYANNOTE_API_TOKEN = os.getenv("PYANNOTE_API_TOKEN", None)  # Required for speaker diarization
+PYANNOTE_API_TOKEN = os.getenv("PYANNOTE_API_TOKEN", None)  # Required for transcription + diarization
+PYANNOTE_SEGMENTATION_THRESHOLD = float(os.getenv("PYANNOTE_SEGMENTATION_THRESHOLD", "0.3"))  # Lower = more speakers (0.1-0.9)
+TRANSCRIPTION_LANGUAGE = os.getenv("TRANSCRIPTION_LANGUAGE", "en")  # Language code for transcription (default: English)
+# TODO: When pyannote.ai adds multi-language support, pass this to the API
 
 # Recording resilience settings
 RECORDING_FORMAT = os.getenv("RECORDING_FORMAT", "mkv")  # mkv (safest), mp4, or ts
@@ -143,19 +140,14 @@ class AppConfig:
     ffmpeg_command: str
     ytdlp_command: str
 
-    # Post-processing settings
-    enable_post_processing: bool
-    post_process_silence_threshold_db: int
-    post_process_min_silence_duration: int
-
     # Audio detection thresholds
     audio_detection_mean_threshold_db: int
     audio_detection_max_threshold_db: int
 
     # Transcription settings
     enable_transcription: bool
-    whisper_model: str
     pyannote_api_token: Optional[str]
+    pyannote_segmentation_threshold: float
 
     # Recording resilience settings
     recording_format: str
@@ -203,14 +195,11 @@ class AppConfig:
             web_port=WEB_PORT,
             ffmpeg_command=FFMPEG_COMMAND,
             ytdlp_command=YTDLP_COMMAND,
-            enable_post_processing=ENABLE_POST_PROCESSING,
-            post_process_silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-            post_process_min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
             audio_detection_mean_threshold_db=AUDIO_DETECTION_MEAN_THRESHOLD_DB,
             audio_detection_max_threshold_db=AUDIO_DETECTION_MAX_THRESHOLD_DB,
             enable_transcription=ENABLE_TRANSCRIPTION,
-            whisper_model=WHISPER_MODEL,
             pyannote_api_token=PYANNOTE_API_TOKEN,
+            pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD,
             recording_format=RECORDING_FORMAT,
             enable_segmented_recording=ENABLE_SEGMENTED_RECORDING,
             segment_duration=SEGMENT_DURATION,
@@ -288,17 +277,17 @@ class AppConfig:
                 errors.append(f"Cannot create DB_DIR '{self.db_dir}': {e}")
 
         # Validate transcription settings
-        valid_whisper_models = ["tiny", "base", "small", "medium", "large", "turbo"]
-        if self.whisper_model not in valid_whisper_models:
-            errors.append(
-                f"WHISPER_MODEL must be one of {valid_whisper_models} "
-                f"(got '{self.whisper_model}')"
-            )
-
         if self.enable_transcription and not self.pyannote_api_token:
             errors.append(
                 "PYANNOTE_API_TOKEN is required when ENABLE_TRANSCRIPTION=true. "
                 "Get a token from https://huggingface.co/pyannote/speaker-diarization"
+            )
+
+        # Validate pyannote segmentation threshold
+        if not (0.0 <= self.pyannote_segmentation_threshold <= 1.0):
+            errors.append(
+                f"PYANNOTE_SEGMENTATION_THRESHOLD must be between 0.0 and 1.0 "
+                f"(got {self.pyannote_segmentation_threshold})"
             )
 
         # Validate Gemini settings

@@ -28,11 +28,8 @@ from config import (
     MEETING_BUFFER_BEFORE,
     MEETING_BUFFER_AFTER,
     ENABLE_TRANSCRIPTION,
-    ENABLE_POST_PROCESSING,
-    WHISPER_MODEL,
+    PYANNOTE_SEGMENTATION_THRESHOLD,
     PYANNOTE_API_TOKEN,
-    POST_PROCESS_SILENCE_THRESHOLD_DB,
-    POST_PROCESS_MIN_SILENCE_DURATION,
     FFMPEG_COMMAND,
     validate_config
 )
@@ -48,29 +45,91 @@ calendar_service = CalendarService()
 meeting_scheduler = MeetingScheduler()
 stream_service = StreamService()
 
+def resume_incomplete_pyannote_jobs(logger):
+    """Resume polling for any incomplete pyannote diarization jobs with concurrency control."""
+    import threading
+    import time
+
+    with db.get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, file_path, pyannote_job_id
+            FROM recordings
+            WHERE pyannote_job_id IS NOT NULL
+            AND diarization_status IN ('pending', 'running')
+        """)
+        incomplete_jobs = cursor.fetchall()
+
+    if not incomplete_jobs:
+        logger.info("No incomplete pyannote jobs found")
+        return
+
+    logger.info(f"Found {len(incomplete_jobs)} incomplete pyannote job(s). Resuming with concurrency control...")
+
+    # Limit concurrent resumptions to avoid overwhelming the API
+    MAX_CONCURRENT_RESUMPTIONS = 3
+    active_threads = []
+
+    for recording_id, file_path, job_id in incomplete_jobs:
+        # Wait for available slot if at max concurrency
+        while len([t for t in active_threads if t.is_alive()]) >= MAX_CONCURRENT_RESUMPTIONS:
+            time.sleep(1)
+            # Clean up completed threads
+            active_threads = [t for t in active_threads if t.is_alive()]
+
+        logger.info(f"Resuming pyannote job {job_id} for recording {recording_id}")
+
+        def resume_job():
+            import json
+            try:
+                from transcription_service import TranscriptionService
+                service = TranscriptionService(
+                    pyannote_api_token=PYANNOTE_API_TOKEN,
+                    pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
+                )
+                # Trigger diarization - it will detect and resume the existing job
+                audio_path = file_path + '.wav' if not file_path.endswith('.wav') else file_path
+                diarization_segments = service.perform_diarization(audio_path, recording_id=recording_id)
+
+                # Save diarization output
+                pyannote_path = file_path + '.diarization.pyannote.json'
+                pyannote_data = {
+                    'file': file_path,
+                    'segments': diarization_segments,
+                    'num_speakers': len(set(seg['speaker'] for seg in diarization_segments)) if diarization_segments else 0
+                }
+                with open(pyannote_path, 'w', encoding='utf-8') as f:
+                    json.dump(pyannote_data, f, indent=2, ensure_ascii=False)
+
+                # Update database
+                db.update_diarization_path(recording_id, pyannote_path, source='pyannote')
+
+                logger.info(f"Successfully resumed and completed pyannote job for recording {recording_id}")
+                logger.info(f"Saved results to: {pyannote_path}")
+            except Exception as e:
+                logger.error(f"Failed to resume pyannote job for recording {recording_id}: {e}", exc_info=True)
+
+        # Run in background thread with concurrency control
+        thread = threading.Thread(target=resume_job, daemon=True)
+        thread.start()
+        active_threads.append(thread)
+
+    logger.info(f"Started {len(active_threads)} resumption threads (max concurrent: {MAX_CONCURRENT_RESUMPTIONS})")
+
+
 # Create optional services based on configuration
 transcription_service = None
 if ENABLE_TRANSCRIPTION:
     from transcription_service import TranscriptionService
     transcription_service = TranscriptionService(
-        whisper_model=WHISPER_MODEL,
-        pyannote_api_token=PYANNOTE_API_TOKEN
-    )
-
-post_processor = None
-if ENABLE_POST_PROCESSING:
-    from post_processor import PostProcessor
-    post_processor = PostProcessor(
-        silence_threshold_db=POST_PROCESS_SILENCE_THRESHOLD_DB,
-        min_silence_duration=POST_PROCESS_MIN_SILENCE_DURATION,
-        ffmpeg_command=FFMPEG_COMMAND
+        pyannote_api_token=PYANNOTE_API_TOKEN,
+        pyannote_segmentation_threshold=PYANNOTE_SEGMENTATION_THRESHOLD
     )
 
 # Initialize recording service with all dependencies
 recording_service = RecordingService(
     stream_service=stream_service,
-    transcription_service=transcription_service,
-    post_processor=post_processor
+    transcription_service=transcription_service
 )
 
 def daily_calendar_refresh() -> None:
@@ -133,7 +192,6 @@ def main() -> None:
 
     # Set recording service in web server so it can stop recordings
     web_server.set_recording_service(recording_service)
-    web_server.set_post_processor(post_processor)
 
     # Start web server in background thread
     web_thread = threading.Thread(target=web_server.run_server, daemon=True)
@@ -143,6 +201,10 @@ def main() -> None:
 
     # Initialize database
     db.init_database()
+
+    # Resume any incomplete pyannote jobs on startup (after DB is initialized)
+    if ENABLE_TRANSCRIPTION and PYANNOTE_API_TOKEN:
+        resume_incomplete_pyannote_jobs(logger)
 
     # Start scheduler thread for midnight calendar refresh
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)

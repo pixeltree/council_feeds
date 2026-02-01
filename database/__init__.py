@@ -44,8 +44,7 @@ from database.repositories.recordings import (
     get_stale_recordings,
     get_transcription_steps,
     get_unprocessed_recordings,
-    mark_recording_segmented,
-    update_post_process_status,
+    update_download_progress,
     update_recording,
     update_recording_diarization_paths,
     update_recording_speakers,
@@ -54,13 +53,6 @@ from database.repositories.recordings import (
     update_transcription_status,
     update_transcription_step,
     update_wav_path,
-)
-
-# Import segment repository functions
-from database.repositories.segments import (
-    create_segment,
-    get_segments_by_recording,
-    update_segment_transcript,
 )
 
 # Import metadata repository functions
@@ -105,8 +97,7 @@ __all__ = [
     "get_stale_recordings",
     "get_transcription_steps",
     "get_unprocessed_recordings",
-    "mark_recording_segmented",
-    "update_post_process_status",
+    "update_download_progress",
     "update_recording",
     "update_recording_diarization_paths",
     "update_recording_speakers",
@@ -115,10 +106,6 @@ __all__ = [
     "update_transcription_status",
     "update_transcription_step",
     "update_wav_path",
-    # Segment functions
-    "create_segment",
-    "get_segments_by_recording",
-    "update_segment_transcript",
     # Metadata functions
     "get_metadata",
     "set_metadata",

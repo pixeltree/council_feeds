@@ -48,6 +48,30 @@ def create_recording(meeting_id: Optional[int], file_path: str, stream_url: str,
         return cursor.lastrowid
 
 
+def update_download_progress(recording_id: int, progress: int, speed: Optional[str] = None) -> None:
+    """Update download progress for a recording.
+
+    Args:
+        recording_id: Recording ID
+        progress: Download progress percentage (0-100)
+        speed: Optional download speed string (e.g., "5.2 MB/s")
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if speed is not None:
+            cursor.execute("""
+                UPDATE recordings
+                SET download_progress = ?, download_speed = ?
+                WHERE id = ?
+            """, (progress, speed, recording_id))
+        else:
+            cursor.execute("""
+                UPDATE recordings
+                SET download_progress = ?
+                WHERE id = ?
+            """, (progress, recording_id))
+
+
 def update_recording(recording_id: int, end_time: datetime, status: str,
                      error_message: Optional[str] = None) -> None:
     """Update recording with completion details.
@@ -201,7 +225,6 @@ def get_recent_recordings(limit: int = 10) -> List[Dict[str, Any]]:
                 r.file_size_bytes,
                 r.status,
                 r.transcript_path,
-                r.is_segmented,
                 r.post_process_status,
                 r.post_process_attempted_at,
                 r.post_process_error,
@@ -227,8 +250,7 @@ def get_recent_recordings(limit: int = 10) -> List[Dict[str, Any]]:
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
                 'transcript_path': row['transcript_path'],
-                'is_segmented': row['is_segmented'],
-                'post_process_status': row['post_process_status'],
+                                'post_process_status': row['post_process_status'],
                 'post_process_attempted_at': row['post_process_attempted_at'],
                 'post_process_error': row['post_process_error'],
                 'transcription_status': row['transcription_status'],
@@ -257,13 +279,15 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
             SELECT
                 r.id,
                 r.file_path,
+                r.stream_url,
                 r.start_time,
                 r.end_time,
                 r.duration_seconds,
                 r.file_size_bytes,
                 r.status,
+                r.error_message,
+                r.download_progress,
                 r.transcript_path,
-                r.is_segmented,
                 r.post_process_status,
                 r.post_process_attempted_at,
                 r.post_process_error,
@@ -275,6 +299,8 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 r.diarization_pyannote_path,
                 r.diarization_gemini_path,
                 r.speakers,
+                r.pyannote_media_url,
+                r.pyannote_upload_size_mb,
                 m.id as meeting_id,
                 m.title as meeting_title,
                 m.meeting_datetime
@@ -288,14 +314,16 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
             return {
                 'id': row['id'],
                 'file_path': row['file_path'],
+                'stream_url': row['stream_url'],
                 'start_time': row['start_time'],
                 'end_time': row['end_time'],
                 'duration_seconds': row['duration_seconds'],
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
+                'error_message': row['error_message'],
+                'download_progress': row['download_progress'],
                 'transcript_path': row['transcript_path'],
-                'is_segmented': row['is_segmented'],
-                'post_process_status': row['post_process_status'],
+                                'post_process_status': row['post_process_status'],
                 'post_process_attempted_at': row['post_process_attempted_at'],
                 'post_process_error': row['post_process_error'],
                 'transcription_status': row['transcription_status'],
@@ -306,49 +334,13 @@ def get_recording_by_id(recording_id: int) -> Optional[Dict]:
                 'diarization_pyannote_path': row['diarization_pyannote_path'],
                 'diarization_gemini_path': row['diarization_gemini_path'],
                 'speakers': row['speakers'],
+                'pyannote_media_url': row['pyannote_media_url'],
+                'pyannote_upload_size_mb': row['pyannote_upload_size_mb'],
                 'meeting_id': row['meeting_id'],
                 'meeting_title': row['meeting_title'],
                 'meeting_datetime': row['meeting_datetime']
             }
         return None
-
-
-def mark_recording_segmented(recording_id: int) -> None:
-    """Mark a recording as having been segmented.
-
-    Args:
-        recording_id: Recording ID
-    """
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            UPDATE recordings
-            SET is_segmented = 1
-            WHERE id = ?
-        """, (recording_id,))
-
-
-def update_post_process_status(recording_id: int, status: str, error: Optional[str] = None) -> None:
-    """Update post-processing status for a recording.
-
-    Args:
-        recording_id: Recording ID
-        status: Status ('pending', 'processing', 'completed', 'failed', 'skipped')
-        error: Optional error message
-    """
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-
-        now = datetime.now(CALGARY_TZ).isoformat()
-
-        cursor.execute("""
-            UPDATE recordings
-            SET post_process_status = ?,
-                post_process_attempted_at = ?,
-                post_process_error = ?
-            WHERE id = ?
-        """, (status, now, error, recording_id))
 
 
 def get_unprocessed_recordings(limit: int = 50) -> List[Dict[str, Any]]:
@@ -373,7 +365,6 @@ def get_unprocessed_recordings(limit: int = 50) -> List[Dict[str, Any]]:
                 r.duration_seconds,
                 r.file_size_bytes,
                 r.status,
-                r.is_segmented,
                 r.post_process_status,
                 r.post_process_attempted_at,
                 r.post_process_error,
@@ -397,8 +388,7 @@ def get_unprocessed_recordings(limit: int = 50) -> List[Dict[str, Any]]:
                 'duration_seconds': row['duration_seconds'],
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
-                'is_segmented': row['is_segmented'],
-                'post_process_status': row['post_process_status'],
+                                'post_process_status': row['post_process_status'],
                 'post_process_attempted_at': row['post_process_attempted_at'],
                 'post_process_error': row['post_process_error'],
                 'meeting_title': row['meeting_title']
@@ -508,10 +498,6 @@ def get_orphaned_files(recordings_dir: Optional[str] = None) -> List[Dict[str, A
         # Get all file paths from database
         cursor.execute("SELECT file_path FROM recordings")
         db_files = {row['file_path'] for row in cursor.fetchall()}
-
-        # Also get segment file paths
-        cursor.execute("SELECT file_path FROM segments")
-        db_files.update(row['file_path'] for row in cursor.fetchall())
 
     orphaned_files = []
 
@@ -642,7 +628,6 @@ def get_recordings_needing_transcription(limit: int = 50) -> List[Dict[str, Any]
                 r.duration_seconds,
                 r.file_size_bytes,
                 r.status,
-                r.is_segmented,
                 r.transcript_path,
                 r.transcription_status,
                 r.transcription_attempted_at,
@@ -667,8 +652,7 @@ def get_recordings_needing_transcription(limit: int = 50) -> List[Dict[str, Any]
                 'duration_seconds': row['duration_seconds'],
                 'file_size_bytes': row['file_size_bytes'],
                 'status': row['status'],
-                'is_segmented': row['is_segmented'],
-                'transcript_path': row['transcript_path'],
+                                'transcript_path': row['transcript_path'],
                 'transcription_status': row['transcription_status'],
                 'transcription_attempted_at': row['transcription_attempted_at'],
                 'transcription_error': row['transcription_error'],
@@ -821,10 +805,7 @@ def delete_recording(recording_id: int) -> bool:
 
         file_path = row['file_path']
 
-        # Delete segments first (foreign key constraint)
-        cursor.execute("DELETE FROM segments WHERE recording_id = ?", (recording_id,))
-
-        # Delete recording logs
+                # Delete recording logs
         cursor.execute("DELETE FROM recording_logs WHERE recording_id = ?", (recording_id,))
 
         # Delete the recording

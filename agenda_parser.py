@@ -4,11 +4,12 @@ Agenda Parser for Calgary Council Stream Recorder.
 Extracts expected speaker names from meeting agenda HTML pages using Gemini AI.
 """
 
-import requests
-from bs4 import BeautifulSoup
-from typing import List, Dict, Optional
 import json
 import logging
+from typing import List, Dict, Optional
+
+import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,7 @@ def _extract_speakers_with_gemini(
             text_content = text_content[:10000]
 
         # Construct prompt
-        prompt = f"""You are analyzing a Calgary City Council meeting agenda. Extract all members/speakers who attended the meeting.
+        prompt = f"""You are analyzing a Calgary City Council meeting minutes. Extract all members/speakers who attended the meeting.
 
 Look specifically for sections titled:
 - "Members Present"

@@ -39,14 +39,11 @@ class TestAppConfigValidation:
             web_port=5000,
             ffmpeg_command="ffmpeg",
             ytdlp_command="yt-dlp",
-            enable_post_processing=False,
-            post_process_silence_threshold_db=-40,
-            post_process_min_silence_duration=120,
             audio_detection_mean_threshold_db=-50,
             audio_detection_max_threshold_db=-30,
             enable_transcription=False,
-            whisper_model="base",
             pyannote_api_token=None,
+            pyannote_segmentation_threshold=0.3,
             recording_format="mkv",
             enable_segmented_recording=True,
             segment_duration=900,
@@ -80,14 +77,11 @@ class TestAppConfigValidation:
             web_port=5000,
             ffmpeg_command="ffmpeg",
             ytdlp_command="yt-dlp",
-            enable_post_processing=False,
-            post_process_silence_threshold_db=-40,
-            post_process_min_silence_duration=120,
             audio_detection_mean_threshold_db=-50,
             audio_detection_max_threshold_db=-30,
             enable_transcription=False,
-            whisper_model="base",
             pyannote_api_token=None,
+            pyannote_segmentation_threshold=0.3,
             recording_format="mkv",
             enable_segmented_recording=True,
             segment_duration=900,
@@ -164,10 +158,10 @@ class TestAppConfigValidation:
                 finally:
                     readonly_dir.chmod(0o755)
 
-    def test_whisper_model_must_be_valid(self, tmp_path):
-        """Test that WHISPER_MODEL must be a valid model name."""
+    def test_pyannote_segmentation_threshold_valid_range(self, tmp_path):
+        """Test that PYANNOTE_SEGMENTATION_THRESHOLD must be between 0.0 and 1.0."""
         with patch.dict(os.environ, {
-            "WHISPER_MODEL": "invalid_model",
+            "PYANNOTE_SEGMENTATION_THRESHOLD": "1.5",
             "OUTPUT_DIR": str(tmp_path / "output"),
             "DB_DIR": str(tmp_path / "db")
         }):
@@ -175,16 +169,16 @@ class TestAppConfigValidation:
             import config as config_module
             reload(config_module)
 
-            with pytest.raises(ValueError, match="WHISPER_MODEL must be one of"):
+            with pytest.raises(ValueError, match="PYANNOTE_SEGMENTATION_THRESHOLD must be between"):
                 config_module.validate_config()
 
-    def test_valid_whisper_models(self, tmp_path):
-        """Test that all valid Whisper models are accepted."""
-        valid_models = ["tiny", "base", "small", "medium", "large", "turbo"]
+    def test_pyannote_segmentation_threshold_accepts_valid_values(self, tmp_path):
+        """Test that valid pyannote segmentation thresholds are accepted."""
+        valid_thresholds = ["0.1", "0.3", "0.5", "0.7", "0.9"]
 
-        for model in valid_models:
+        for threshold in valid_thresholds:
             with patch.dict(os.environ, {
-                "WHISPER_MODEL": model,
+                "PYANNOTE_SEGMENTATION_THRESHOLD": threshold,
                 "OUTPUT_DIR": str(tmp_path / "output"),
                 "DB_DIR": str(tmp_path / "db")
             }):
@@ -193,7 +187,7 @@ class TestAppConfigValidation:
                 reload(config_module)
 
                 config = config_module.validate_config()
-                assert config.whisper_model == model
+                assert config.pyannote_segmentation_threshold == float(threshold)
 
     def test_pyannote_token_required_when_transcription_enabled(self, tmp_path):
         """Test that PYANNOTE_API_TOKEN is required when transcription is enabled."""
@@ -398,14 +392,11 @@ class TestAppConfigValidation:
             web_port=0,  # Invalid
             ffmpeg_command="ffmpeg",
             ytdlp_command="yt-dlp",
-            enable_post_processing=False,
-            post_process_silence_threshold_db=-40,
-            post_process_min_silence_duration=120,
             audio_detection_mean_threshold_db=-50,
             audio_detection_max_threshold_db=-30,
             enable_transcription=False,
-            whisper_model="invalid",  # Invalid
             pyannote_api_token=None,
+            pyannote_segmentation_threshold=1.5,  # Invalid
             recording_format="mkv",
             enable_segmented_recording=True,
             segment_duration=900,
@@ -427,7 +418,7 @@ class TestAppConfigValidation:
         error_message = str(exc_info.value)
         # All three errors should be mentioned
         assert "ACTIVE_CHECK_INTERVAL" in error_message
-        assert "WHISPER_MODEL" in error_message
+        assert "PYANNOTE_SEGMENTATION_THRESHOLD" in error_message
         assert "WEB_PORT" in error_message
 
     def test_config_dataclass_attributes(self, tmp_path):
@@ -455,10 +446,9 @@ class TestAppConfigValidation:
             assert hasattr(config, 'web_port')
             assert hasattr(config, 'ffmpeg_command')
             assert hasattr(config, 'ytdlp_command')
-            assert hasattr(config, 'enable_post_processing')
             assert hasattr(config, 'enable_transcription')
-            assert hasattr(config, 'whisper_model')
             assert hasattr(config, 'pyannote_api_token')
+            assert hasattr(config, 'pyannote_segmentation_threshold')
             assert hasattr(config, 'recording_format')
             assert hasattr(config, 'enable_segmented_recording')
             assert hasattr(config, 'segment_duration')

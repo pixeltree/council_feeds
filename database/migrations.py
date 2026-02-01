@@ -143,6 +143,8 @@ def init_database() -> None:
         _migrate_add_diarization_columns(cursor)
         _migrate_add_speakers_column(cursor)
         _migrate_add_transcription_steps_columns(cursor)
+        _migrate_add_download_progress_column(cursor)
+        _migrate_add_pyannote_media_url_column(cursor)
 
 
 def _migrate_add_room_column(cursor: sqlite3.Cursor) -> None:
@@ -218,3 +220,48 @@ def _migrate_add_transcription_steps_columns(cursor: sqlite3.Cursor) -> None:
         cursor.execute("ALTER TABLE recordings ADD COLUMN transcription_steps TEXT")
     if 'wav_path' not in columns:
         cursor.execute("ALTER TABLE recordings ADD COLUMN wav_path TEXT")
+
+
+def _migrate_add_download_progress_column(cursor: sqlite3.Cursor) -> None:
+    """Migration: Add download progress column to recordings table."""
+    cursor.execute("PRAGMA table_info(recordings)")
+    columns = [column[1] for column in cursor.fetchall()]
+
+    if 'download_progress' not in columns:
+        logger.info("Running migration: Adding download_progress column to recordings table")
+        cursor.execute("ALTER TABLE recordings ADD COLUMN download_progress INTEGER DEFAULT 0")  # 0-100 percentage
+    if 'download_speed' not in columns:
+        logger.info("Running migration: Adding download_speed column to recordings table")
+        cursor.execute("ALTER TABLE recordings ADD COLUMN download_speed TEXT")  # Human-readable speed (e.g., "5.2 MB/s")
+
+
+def _migrate_add_pyannote_media_url_column(cursor: sqlite3.Cursor) -> None:
+    """Migration: Add pyannote media URL and job ID columns to recordings table."""
+    cursor.execute("PRAGMA table_info(recordings)")
+    columns = [column[1] for column in cursor.fetchall()]
+
+    if 'pyannote_media_url' not in columns:
+        logger.info("Running migration: Adding pyannote_media_url column to recordings table")
+        cursor.execute("ALTER TABLE recordings ADD COLUMN pyannote_media_url TEXT")  # Cloud URL for reuse
+    if 'pyannote_upload_size_mb' not in columns:
+        logger.info("Running migration: Adding pyannote_upload_size_mb column to recordings table")
+        cursor.execute("ALTER TABLE recordings ADD COLUMN pyannote_upload_size_mb REAL")  # Track file size uploaded
+    if 'pyannote_job_id' not in columns:
+        logger.info("Running migration: Adding pyannote_job_id column to recordings table")
+        cursor.execute("ALTER TABLE recordings ADD COLUMN pyannote_job_id TEXT")  # Active job ID for resuming
+    if 'diarization_status' not in columns:
+        logger.info("Running migration: Adding diarization_status column to recordings table")
+        cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_status TEXT DEFAULT 'pending'")  # pending, running, completed, failed
+        # Set default status for existing recordings with NULL values
+        logger.info("Running migration: Setting default diarization_status for existing recordings")
+        cursor.execute("UPDATE recordings SET diarization_status = 'pending' WHERE diarization_status IS NULL")
+
+        # Migration: Remove segmentation feature (no longer needed with cloud transcription)
+        # Drop segments table
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='segments'")
+        if cursor.fetchone():
+            logger.info("Running migration: Dropping segments table (segmentation feature removed)")
+            cursor.execute("DROP TABLE IF EXISTS segments")
+
+        # Remove is_segmented column from recordings (note: SQLite doesn't support DROP COLUMN directly in older versions)
+        # We'll leave it for backwards compatibility but stop using it
