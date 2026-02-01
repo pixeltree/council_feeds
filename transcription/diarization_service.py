@@ -295,22 +295,22 @@ class DiarizationService:
                     try:
                         result = self._poll_job(existing_job_id, headers, audio_path, recording_id, segment_number)
 
-                    # Clear job ID and set status to completed
-                    with db.get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "UPDATE recordings SET pyannote_job_id = NULL, diarization_status = ? WHERE id = ?",
-                            ('completed', recording_id)
-                        )
-                except Exception as e:
-                    # Set status to failed on error
-                    with db.get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute(
-                            "UPDATE recordings SET diarization_status = ? WHERE id = ?",
-                            ('failed', recording_id)
-                        )
-                    raise
+                        # Clear job ID and set status to completed
+                        with db.get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "UPDATE recordings SET pyannote_job_id = NULL, diarization_status = ? WHERE id = ?",
+                                ('completed', recording_id)
+                            )
+                    except Exception as e:
+                        # Set status to failed on error
+                        with db.get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "UPDATE recordings SET diarization_status = ? WHERE id = ?",
+                                ('failed', recording_id)
+                            )
+                        raise
 
                 if recording_id:
                     db.add_transcription_log(recording_id, f'{prefix}Speaker diarization completed', 'info')
