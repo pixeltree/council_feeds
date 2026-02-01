@@ -38,6 +38,70 @@ def set_recording_service(service: Any) -> None:
     recording_service = service
 
 
+def download_vod_with_retry(recording_id: int, escriba_url: str, output_path: str, is_manual_retry: bool = False) -> None:
+    """
+    Helper function to download VOD with retry logic and exponential backoff.
+
+    Args:
+        recording_id: Database ID of the recording
+        escriba_url: URL to download from
+        output_path: Path to save the video
+        is_manual_retry: Whether this is a manual retry initiated by user
+    """
+    vod_service = VodService()
+    max_retries = 3
+    retry_count = 0
+    last_error = None
+
+    while retry_count < max_retries:
+        try:
+            if retry_count > 0:
+                logger.info(f"Retry {retry_count}/{max_retries} for recording {recording_id}")
+                db.add_recording_log(recording_id, f"Retry attempt {retry_count}/{max_retries}", 'info')
+            else:
+                if is_manual_retry:
+                    logger.info(f"Starting VOD download retry for recording {recording_id} from {escriba_url}")
+                    db.add_recording_log(recording_id, "Manual retry initiated by user", 'info')
+                else:
+                    logger.info(f"Starting VOD download for recording {recording_id} from {escriba_url}")
+
+            # Download the video
+            vod_service.download_vod(escriba_url, output_path, recording_id)
+
+            # Update recording to completed (file size and duration are calculated by update_recording)
+            db.update_recording(
+                recording_id,
+                datetime.now(CALGARY_TZ),
+                'completed'
+            )
+
+            logger.info(f"VOD download completed for recording {recording_id}")
+            if is_manual_retry:
+                db.add_recording_log(recording_id, "Download completed successfully", 'info')
+            return
+
+        except Exception as e:
+            last_error = e
+            retry_count += 1
+            logger.warning(f"VOD download attempt {retry_count} failed for recording {recording_id}: {e}")
+            db.add_recording_log(recording_id, f"Download attempt {retry_count}/{max_retries} failed: {str(e)}", 'error')
+
+            if retry_count < max_retries:
+                wait_time = 5 * retry_count  # Exponential backoff: 5s, 10s, 15s
+                db.add_recording_log(recording_id, f"Retrying in {wait_time} seconds...", 'info')
+                time.sleep(wait_time)
+
+    # All retries failed
+    logger.error(f"VOD download failed for recording {recording_id} after {max_retries} attempts: {last_error}", exc_info=True)
+    db.add_recording_log(recording_id, f"All {max_retries} download attempts failed", 'error')
+    db.update_recording(
+        recording_id,
+        datetime.now(CALGARY_TZ),
+        'failed',
+        error_message=f"Failed after {max_retries} attempts: {str(last_error)}"
+    )
+
+
 def get_current_recording() -> Optional[Dict[str, Any]]:
     """Get currently active recording if any."""
     with db.get_db_connection() as conn:
@@ -629,54 +693,10 @@ def import_vod() -> Union[Response, Tuple[Response, int]]:
             'message': f'Database error: {str(e)}'
         }), 500
 
-    # Download video in background thread
+    # Download video in background thread using shared retry logic
     def download_video() -> None:
         """Background task to download the video."""
-        max_retries = 3
-        retry_count = 0
-        last_error = None
-
-        while retry_count < max_retries:
-            try:
-                if retry_count > 0:
-                    logger.info(f"Retry {retry_count}/{max_retries} for recording {recording_id}")
-                else:
-                    logger.info(f"Starting VOD download for recording {recording_id} from {escriba_url}")
-
-                # Download the video
-                vod_service.download_vod(escriba_url, output_path, recording_id)
-
-                # Update recording to completed (file size and duration are calculated by update_recording)
-                db.update_recording(
-                    recording_id,
-                    datetime.now(CALGARY_TZ),
-                    'completed'
-                )
-
-                logger.info(f"VOD download completed for recording {recording_id}")
-
-                return
-
-            except Exception as e:
-                last_error = e
-                retry_count += 1
-                logger.warning(f"VOD download attempt {retry_count} failed for recording {recording_id}: {e}")
-                db.add_recording_log(recording_id, f"Download attempt {retry_count}/{max_retries} failed: {str(e)}", 'error')
-
-                if retry_count < max_retries:
-                    wait_time = 5 * retry_count
-                    db.add_recording_log(recording_id, f"Retrying in {wait_time} seconds...", 'info')
-                    time.sleep(wait_time)  # Exponential backoff: 5s, 10s, 15s
-
-        # All retries failed
-        logger.error(f"VOD download failed for recording {recording_id} after {max_retries} attempts: {last_error}", exc_info=True)
-        db.add_recording_log(recording_id, f"All {max_retries} download attempts failed", 'error')
-        db.update_recording(
-            recording_id,
-            datetime.now(CALGARY_TZ),
-            'failed',
-            error_message=f"Failed after {max_retries} attempts: {str(last_error)}"
-        )
+        download_vod_with_retry(recording_id, escriba_url, output_path, is_manual_retry=False)
 
     # Start background download thread
     thread = threading.Thread(target=download_video, daemon=True)
@@ -770,56 +790,10 @@ def retry_vod_download(recording_id: int) -> Union[Response, Tuple[Response, int
         error_message=None
     )
 
-    # Download video in background thread with retry logic
+    # Download video in background thread using shared retry logic
     def download_video() -> None:
         """Background task to download the video."""
-        max_retries = 3
-        retry_count = 0
-        last_error = None
-
-        while retry_count < max_retries:
-            try:
-                if retry_count > 0:
-                    logger.info(f"Retry {retry_count}/{max_retries} for recording {recording_id}")
-                    db.add_recording_log(recording_id, f"Retry attempt {retry_count}/{max_retries}", 'info')
-                else:
-                    logger.info(f"Starting VOD download retry for recording {recording_id} from {escriba_url}")
-                    db.add_recording_log(recording_id, "Manual retry initiated by user", 'info')
-
-                # Download the video
-                vod_service.download_vod(escriba_url, output_path, recording_id)
-
-                # Update recording to completed
-                db.update_recording(
-                    recording_id,
-                    datetime.now(CALGARY_TZ),
-                    'completed'
-                )
-
-                logger.info(f"VOD download completed for recording {recording_id}")
-                db.add_recording_log(recording_id, "Download completed successfully", 'info')
-                return
-
-            except Exception as e:
-                last_error = e
-                retry_count += 1
-                logger.warning(f"VOD download attempt {retry_count} failed for recording {recording_id}: {e}")
-                db.add_recording_log(recording_id, f"Download attempt {retry_count}/{max_retries} failed: {str(e)}", 'error')
-
-                if retry_count < max_retries:
-                    wait_time = 5 * retry_count
-                    db.add_recording_log(recording_id, f"Retrying in {wait_time} seconds...", 'info')
-                    time.sleep(wait_time)  # Exponential backoff
-
-        # All retries failed
-        logger.error(f"VOD download failed for recording {recording_id} after {max_retries} attempts: {last_error}", exc_info=True)
-        db.add_recording_log(recording_id, f"All {max_retries} download attempts failed", 'error')
-        db.update_recording(
-            recording_id,
-            datetime.now(CALGARY_TZ),
-            'failed',
-            error_message=f"Failed after {max_retries} attempts: {str(last_error)}"
-        )
+        download_vod_with_retry(recording_id, escriba_url, output_path, is_manual_retry=True)
 
     # Start background download thread
     thread = threading.Thread(target=download_video, daemon=True)

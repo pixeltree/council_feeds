@@ -13,6 +13,11 @@ from exceptions import GeminiError
 
 logger = logging.getLogger(__name__)
 
+# Constants for chunking and validation
+NATURAL_PAUSE_THRESHOLD_SECONDS = 1.5  # Minimum pause duration to split chunks
+TIMESTAMP_TOLERANCE_SECONDS = 0.5  # Tolerance for timestamp validation
+MAX_GAP_SECONDS = 5.0  # Maximum allowed gap between segments
+
 
 async def _refine_with_chunking(
     merged_transcript: Dict,
@@ -54,10 +59,10 @@ async def _refine_with_chunking(
 
         # Check if we should split chunk
         if len(current_chunk) >= chunk_size:
-            # Look for natural break point (pause > 1.5 seconds)
+            # Look for natural break point (pause > NATURAL_PAUSE_THRESHOLD_SECONDS)
             if i < len(segments) - 1:
                 pause = segments[i + 1]['start'] - segment['end']
-                if pause > 1.5:  # Natural break
+                if pause > NATURAL_PAUSE_THRESHOLD_SECONDS:
                     chunks.append(current_chunk)
                     current_chunk = []
             else:
@@ -162,7 +167,7 @@ async def _refine_with_chunking(
 
                 # Validate timestamps match (within tolerance)
                 timestamps_match = all(
-                    abs(refined_chunk_segments[i]['start'] - chunk[i]['start']) < 0.5
+                    abs(refined_chunk_segments[i]['start'] - chunk[i]['start']) < TIMESTAMP_TOLERANCE_SECONDS
                     for i in range(len(chunk))
                 )
 
@@ -209,9 +214,9 @@ async def _refine_with_chunking(
         current_end = refined_segments[i]['end']
         next_start = refined_segments[i + 1]['start']
 
-        if next_start < current_end - 0.5:  # Overlap
+        if next_start < current_end - TIMESTAMP_TOLERANCE_SECONDS:  # Overlap
             logger.warning(f"Overlap detected at segment {i}: {current_end}s -> {next_start}s")
-        elif next_start > current_end + 5.0:  # Large gap
+        elif next_start > current_end + MAX_GAP_SECONDS:  # Large gap
             logger.warning(f"Large gap detected at segment {i}: {current_end}s -> {next_start}s")
 
     # Count refined vs generic speakers

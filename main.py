@@ -46,8 +46,9 @@ meeting_scheduler = MeetingScheduler()
 stream_service = StreamService()
 
 def resume_incomplete_pyannote_jobs(logger):
-    """Resume polling for any incomplete pyannote diarization jobs."""
+    """Resume polling for any incomplete pyannote diarization jobs with concurrency control."""
     import threading
+    import time
 
     with db.get_db_connection() as conn:
         cursor = conn.cursor()
@@ -63,9 +64,19 @@ def resume_incomplete_pyannote_jobs(logger):
         logger.info("No incomplete pyannote jobs found")
         return
 
-    logger.info(f"Found {len(incomplete_jobs)} incomplete pyannote job(s). Resuming...")
+    logger.info(f"Found {len(incomplete_jobs)} incomplete pyannote job(s). Resuming with concurrency control...")
+
+    # Limit concurrent resumptions to avoid overwhelming the API
+    MAX_CONCURRENT_RESUMPTIONS = 3
+    active_threads = []
 
     for recording_id, file_path, job_id in incomplete_jobs:
+        # Wait for available slot if at max concurrency
+        while len([t for t in active_threads if t.is_alive()]) >= MAX_CONCURRENT_RESUMPTIONS:
+            time.sleep(1)
+            # Clean up completed threads
+            active_threads = [t for t in active_threads if t.is_alive()]
+
         logger.info(f"Resuming pyannote job {job_id} for recording {recording_id}")
 
         def resume_job():
@@ -98,9 +109,12 @@ def resume_incomplete_pyannote_jobs(logger):
             except Exception as e:
                 logger.error(f"Failed to resume pyannote job for recording {recording_id}: {e}", exc_info=True)
 
-        # Run in background thread
+        # Run in background thread with concurrency control
         thread = threading.Thread(target=resume_job, daemon=True)
         thread.start()
+        active_threads.append(thread)
+
+    logger.info(f"Started {len(active_threads)} resumption threads (max concurrent: {MAX_CONCURRENT_RESUMPTIONS})")
 
 
 # Create optional services based on configuration

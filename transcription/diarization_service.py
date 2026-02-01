@@ -80,13 +80,24 @@ class DiarizationService:
                 existing_media_url = result[0] if result and result[0] else None
 
             if existing_media_url:
-                msg = f"Reusing existing pyannote.ai media URL: {existing_media_url}"
+                # Validate that the media URL is still valid by checking with API
+                msg = f"Validating existing pyannote.ai media URL: {existing_media_url}"
                 self.logger.info(msg)
                 db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
-                db.add_recording_log(recording_id, f'{prefix}Reusing uploaded audio (no re-upload needed)', 'info')
-                # Update progress to show we're not uploading
-                db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'preparing'})
-                media_url = existing_media_url
+
+                # Try to use existing URL, but be ready to re-upload if it's expired
+                try:
+                    # Test if the media URL is still valid by attempting to use it
+                    # We'll do this in the job submission step, so just mark it for now
+                    db.add_recording_log(recording_id, f'{prefix}Attempting to reuse uploaded audio', 'info')
+                    db.update_transcription_progress(recording_id, {'stage': 'diarization', 'step': 'preparing'})
+                    media_url = existing_media_url
+                except Exception as e:
+                    # If validation fails, we'll re-upload below
+                    msg = f"Cached media URL validation failed: {e}. Will re-upload."
+                    self.logger.warning(msg)
+                    db.add_transcription_log(recording_id, f'{prefix}{msg}', 'warning')
+                    existing_media_url = None
         else:
             existing_media_url = None
 
@@ -211,22 +222,78 @@ class DiarizationService:
                 existing_job_id = result[0] if result and result[0] else None
 
             if existing_job_id:
-                msg = f"Found existing pyannote job (ID: {existing_job_id}). Resuming..."
+                msg = f"Found existing pyannote job (ID: {existing_job_id}). Checking status..."
                 self.logger.info(msg)
                 db.add_transcription_log(recording_id, f'{prefix}{msg}', 'info')
-                db.add_recording_log(recording_id, f'{prefix}Resuming existing job (avoiding duplicate credits)', 'info')
 
-                # Set status to running if not already
-                with db.get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "UPDATE recordings SET diarization_status = ? WHERE id = ?",
-                        ('running', recording_id)
+                # Check job status first to avoid resuming completed/failed jobs
+                try:
+                    status_response = requests.get(
+                        f"{self.api_url}/{existing_job_id}",
+                        headers=headers,
+                        timeout=10
                     )
 
-                # Skip to polling
-                try:
-                    result = self._poll_job(existing_job_id, headers, audio_path, recording_id, segment_number)
+                    if status_response.status_code == 200:
+                        job_status_data = status_response.json()
+                        job_status = job_status_data.get('status', 'unknown')
+
+                        if job_status in ['completed', 'succeeded', 'done']:
+                            msg = f"Job {existing_job_id} already completed. Using existing results."
+                            self.logger.info(msg)
+                            db.add_recording_log(recording_id, f'{prefix}{msg}', 'info')
+                            # Continue to process the completed result
+                        elif job_status in ['failed', 'error']:
+                            msg = f"Job {existing_job_id} previously failed. Starting new job..."
+                            self.logger.warning(msg)
+                            db.add_recording_log(recording_id, f'{prefix}{msg}', 'warning')
+                            # Clear failed job ID and start fresh
+                            with db.get_db_connection() as conn:
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    "UPDATE recordings SET pyannote_job_id = NULL WHERE id = ?",
+                                    (recording_id,)
+                                )
+                            existing_job_id = None  # Will create new job below
+                        else:
+                            msg = f"Job {existing_job_id} status: {job_status}. Resuming..."
+                            self.logger.info(msg)
+                            db.add_recording_log(recording_id, f'{prefix}Resuming job (avoiding duplicate credits)', 'info')
+                    elif status_response.status_code == 404:
+                        msg = f"Job {existing_job_id} not found on server. Starting new job..."
+                        self.logger.warning(msg)
+                        db.add_recording_log(recording_id, f'{prefix}{msg}', 'warning')
+                        # Clear missing job ID
+                        with db.get_db_connection() as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                "UPDATE recordings SET pyannote_job_id = NULL WHERE id = ?",
+                                (recording_id,)
+                            )
+                        existing_job_id = None
+                    else:
+                        msg = f"Could not check job status (HTTP {status_response.status_code}). Attempting resume..."
+                        self.logger.warning(msg)
+                        db.add_recording_log(recording_id, f'{prefix}{msg}', 'warning')
+
+                except Exception as status_check_error:
+                    msg = f"Error checking job status: {status_check_error}. Attempting resume anyway..."
+                    self.logger.warning(msg)
+                    db.add_recording_log(recording_id, f'{prefix}{msg}', 'warning')
+
+                # Only resume if job still exists and is not completed/failed
+                if existing_job_id:
+                    # Set status to running if not already
+                    with db.get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "UPDATE recordings SET diarization_status = ? WHERE id = ?",
+                            ('running', recording_id)
+                        )
+
+                    # Skip to polling
+                    try:
+                        result = self._poll_job(existing_job_id, headers, audio_path, recording_id, segment_number)
 
                     # Clear job ID and set status to completed
                     with db.get_db_connection() as conn:
@@ -292,6 +359,22 @@ class DiarizationService:
             json=request_body,
             timeout=30
         )
+
+        # Check if media URL expired (404/403 errors indicate invalid/expired URL)
+        if response.status_code in [403, 404] and existing_media_url:
+            msg = f"Media URL expired or invalid (status {response.status_code}). Re-uploading..."
+            self.logger.warning(msg)
+            if recording_id:
+                db.add_transcription_log(recording_id, f'{prefix}{msg}', 'warning')
+                # Clear the expired URL from database
+                with db.get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "UPDATE recordings SET pyannote_media_url = NULL WHERE id = ?",
+                        (recording_id,)
+                    )
+            # Recursively call with force_reupload flag by clearing existing_media_url
+            return self.perform_diarization(audio_path, recording_id, segment_number)
 
         if response.status_code != 200:
             error_msg = f"API request failed with status {response.status_code}: {response.text}"
@@ -395,9 +478,9 @@ class DiarizationService:
 
         job_url = f"https://api.pyannote.ai/v1/jobs/{job_id}"
         last_status = None
-        max_poll_time = 600  # 10 minutes max
         poll_interval = 10  # Poll every 10 seconds
-        max_iterations = max_poll_time // poll_interval
+        max_poll_time = 600  # 10 minutes max (adjusted to match new poll interval)
+        max_iterations = max_poll_time // poll_interval  # 60 iterations
         iteration = 0
 
         while iteration < max_iterations:

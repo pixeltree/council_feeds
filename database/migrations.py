@@ -251,7 +251,10 @@ def _migrate_add_pyannote_media_url_column(cursor: sqlite3.Cursor) -> None:
         cursor.execute("ALTER TABLE recordings ADD COLUMN pyannote_job_id TEXT")  # Active job ID for resuming
     if 'diarization_status' not in columns:
         logger.info("Running migration: Adding diarization_status column to recordings table")
-        cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_status TEXT")  # pending, running, completed, failed
+        cursor.execute("ALTER TABLE recordings ADD COLUMN diarization_status TEXT DEFAULT 'pending'")  # pending, running, completed, failed
+        # Set default status for existing recordings with NULL values
+        logger.info("Running migration: Setting default diarization_status for existing recordings")
+        cursor.execute("UPDATE recordings SET diarization_status = 'pending' WHERE diarization_status IS NULL")
 
         # Migration: Remove segmentation feature (no longer needed with cloud transcription)
         # Drop segments table

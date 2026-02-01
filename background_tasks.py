@@ -6,9 +6,12 @@ Tracks long-running background operations like transcription, diarization, and s
 
 import threading
 import time
+import logging
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -89,6 +92,8 @@ class BackgroundTaskManager:
         with self._lock:
             if task_id in self._tasks:
                 self._tasks[task_id].progress = progress
+            else:
+                logger.warning(f"Attempted to update progress for non-existent task: {task_id}")
 
     def complete_task(self, task_id: str, error: Optional[str] = None) -> None:
         """Mark a task as completed or failed."""
@@ -101,6 +106,8 @@ class BackgroundTaskManager:
                     task.error = error
                 else:
                     task.status = 'completed'
+            else:
+                logger.warning(f"Attempted to complete non-existent task: {task_id} (error: {error})")
 
     def get_all_tasks(self) -> list[Dict[str, Any]]:
         """Get all active and recently completed tasks."""

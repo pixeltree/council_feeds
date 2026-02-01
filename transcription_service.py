@@ -241,9 +241,10 @@ class TranscriptionService:
 
         # Extract transcription from diarization segments
         if diarization_segments:
+            from config import TRANSCRIPTION_LANGUAGE
             # Build transcription from segments
             transcription = {
-                'language': 'en',  # pyannote currently uses English STT
+                'language': TRANSCRIPTION_LANGUAGE,
                 'text': ' '.join(seg.get('text', '') for seg in diarization_segments if seg.get('text')),
                 'segments': [
                     {

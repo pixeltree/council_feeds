@@ -81,6 +81,8 @@ AUDIO_DETECTION_MAX_THRESHOLD_DB = -30  # Max volume threshold for detecting sil
 ENABLE_TRANSCRIPTION = os.getenv("ENABLE_TRANSCRIPTION", "false").lower() == "true"
 PYANNOTE_API_TOKEN = os.getenv("PYANNOTE_API_TOKEN", None)  # Required for transcription + diarization
 PYANNOTE_SEGMENTATION_THRESHOLD = float(os.getenv("PYANNOTE_SEGMENTATION_THRESHOLD", "0.3"))  # Lower = more speakers (0.1-0.9)
+TRANSCRIPTION_LANGUAGE = os.getenv("TRANSCRIPTION_LANGUAGE", "en")  # Language code for transcription (default: English)
+# TODO: When pyannote.ai adds multi-language support, pass this to the API
 
 # Recording resilience settings
 RECORDING_FORMAT = os.getenv("RECORDING_FORMAT", "mkv")  # mkv (safest), mp4, or ts
